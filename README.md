@@ -52,12 +52,13 @@ Your PAT needs the `write:packages` scope. Create one at **GitHub → Settings �
 ### 2. Build the image
 
 ```bash
-docker build -t ghcr.io/bdpost/clabpktgen:latest .
+docker build -t ghcr.io/bdpost/clabpktgen:0.0.5 -t ghcr.io/bdpost/clabpktgen:latest .
 ```
 
 ### 3. Push
 
 ```bash
+docker push ghcr.io/bdpost/clabpktgen:0.0.5
 docker push ghcr.io/bdpost/clabpktgen:latest
 ```
 
@@ -114,9 +115,8 @@ topology:
         - NET_RAW
       ports:
         - "8080:8080/tcp"
-      # Optional: override entrypoint env vars
       env:
-        PYTHONUNBUFFERED: "1"
+        STATIC_ROUTES: "10.0.2.0/24|10.64.254.1|eth0,10.77.7.0/24|10.64.254.1|eth0,10.255.2.0/24|10.64.254.1|eth0"
 
     ceos1:
       kind: arista_ceos
@@ -171,21 +171,61 @@ interface Ethernet1
 
 ## Static Management Routes
 
-The container installs these routes on `eth0` at startup (via `entrypoint.sh`):
+Static routes are injected at startup via the `STATIC_ROUTES` environment variable — no image rebuild needed. This is the primary mechanism for management reach-back routes on `eth0`.
 
-| Prefix | Next-hop |
-|---|---|
-| 10.0.2.0/24 | 10.64.254.1 |
-| 10.77.7.0/24 | 10.64.254.1 |
-| 10.255.2.0/24 | 10.64.254.1 |
+### Format
 
-To change these, edit `entrypoint.sh` before building:
+Comma-separated `prefix|nexthop|dev` triplets:
+
+```
+prefix/len|next-hop-ip|interface[,prefix/len|next-hop-ip|interface,...]
+```
+
+### Setting routes in a Containerlab topology
+
+```yaml
+nodes:
+  pktgen:
+    kind: linux
+    image: ghcr.io/bdpost/clabpktgen:latest
+    env:
+      STATIC_ROUTES: "10.0.2.0/24|10.64.254.1|eth0,10.77.7.0/24|10.64.254.1|eth0,10.255.2.0/24|10.64.254.1|eth0"
+```
+
+Each topology file can specify its own routes — no rebuild required when moving between labs.
+
+### Setting routes in docker-compose (local dev)
+
+Uncomment and edit the `STATIC_ROUTES` line in `docker-compose.yml`:
+
+```yaml
+environment:
+  - PYTHONUNBUFFERED=1
+  - STATIC_ROUTES=10.0.2.0/24|10.64.254.1|eth0,10.77.7.0/24|10.64.254.1|eth0
+```
+
+### Adding routes at runtime
+
+Routes can be added, removed, or flushed at any time without restarting the container — either through the GUI (Routes panel) or the API:
 
 ```bash
-ip route add 10.0.2.0/24   via 10.64.254.1 dev eth0 2>/dev/null || true
-ip route add 10.77.7.0/24  via 10.64.254.1 dev eth0 2>/dev/null || true
-ip route add 10.255.2.0/24 via 10.64.254.1 dev eth0 2>/dev/null || true
+# Add a route
+curl -X POST http://<pktgen-ip>:8080/api/routes/add \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "10.0.2.0/24", "nexthop": "10.64.254.1", "interface": "eth0"}'
+
+# Remove a route
+curl -X POST http://<pktgen-ip>:8080/api/routes/del \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "10.0.2.0/24", "nexthop": "10.64.254.1", "interface": "eth0"}'
+
+# Flush all routes on an interface
+curl -X POST http://<pktgen-ip>:8080/api/routes/flush \
+  -H "Content-Type: application/json" \
+  -d '{"interface": "eth0"}'
 ```
+
+> **Note:** Runtime routes are not persisted. On container restart, only the routes in `STATIC_ROUTES` are re-applied.
 
 ---
 
@@ -274,13 +314,15 @@ docker compose down
 
 ## API Reference
 
+### TX
+
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/send` | Send a fixed number of packets |
 | `POST` | `/api/start` | Start a continuous packet stream |
 | `POST` | `/api/stop` | Stop the running stream |
 | `GET` | `/api/status` | Stream status + total sent count |
-| `GET` | `/api/interfaces` | List available network interfaces |
+| `GET` | `/api/interfaces` | List interfaces and their MAC addresses |
 
 **Send example:**
 ```bash
@@ -301,6 +343,62 @@ curl -X POST http://localhost:8080/api/send \
     "interface": "eth1"
   }'
 ```
+
+### Interface
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/interface/up` | Assign an IP to an interface and bring it up |
+| `POST` | `/api/interface/down` | Flush address and routes, bring interface down |
+
+```bash
+curl -X POST http://localhost:8080/api/interface/up \
+  -H "Content-Type: application/json" \
+  -d '{"interface": "eth1", "ip": "10.1.1.2/24"}'
+```
+
+### Routes
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/routes/add` | Add a static route |
+| `POST` | `/api/routes/del` | Delete a static route |
+| `POST` | `/api/routes/flush` | Flush all routes on an interface |
+
+```bash
+curl -X POST http://localhost:8080/api/routes/add \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "10.0.0.0/8", "nexthop": "10.1.1.1", "interface": "eth1"}'
+```
+
+### ARP
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/arp/resolve` | Ping a target to populate ARP, return its MAC |
+
+```bash
+curl -X POST http://localhost:8080/api/arp/resolve \
+  -H "Content-Type: application/json" \
+  -d '{"ip": "10.1.1.1", "interface": "eth1"}'
+```
+
+### RX
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/rx/start` | Start capturing packets on an interface |
+| `POST` | `/api/rx/stop` | Stop capturing |
+| `GET` | `/api/rx/packets` | Fetch captured packets (optional `?since=<seq>`) |
+| `DELETE` | `/api/rx/packets` | Clear the captured packet buffer |
+
+### Socket Listener
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/listener/start` | Start a TCP/UDP socket listener |
+| `POST` | `/api/listener/stop` | Stop the listener |
+| `GET` | `/api/listener/status` | Listener state + connection count |
 
 ---
 

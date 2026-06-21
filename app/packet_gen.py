@@ -4,7 +4,7 @@ import threading
 from collections import deque
 from scapy.all import (
     AsyncSniffer, Ether, Dot1Q, IP, UDP, TCP, ICMP, Raw,
-    sendp, get_if_list,
+    sendp, get_if_list, get_if_hwaddr,
 )
 
 # ─── TX state ─────────────────────────────────────────────────────────────────
@@ -30,6 +30,13 @@ _listener_lock = threading.Lock()
 
 def get_interfaces() -> list[str]:
     return get_if_list()
+
+
+def get_hwaddr(iface: str) -> str:
+    try:
+        return get_if_hwaddr(iface)
+    except Exception:
+        return ""
 
 
 # ─── TX ───────────────────────────────────────────────────────────────────────

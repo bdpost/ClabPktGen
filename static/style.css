@@ -262,6 +262,43 @@ main {
 }
 .route-clear:hover { background: rgba(248,81,73,.08) !important; }
 
+/* ─── ARP Resolve Row ─── */
+.arp-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.arp-row input {
+  flex: 1;
+  font-size: .75rem;
+  padding: 5px 8px;
+  margin-bottom: 0;
+}
+
+.btn-arp {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  padding: 5px 12px;
+  white-space: nowrap;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+
+.btn-arp:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-hi);
+  background: rgba(56,139,253,.1);
+}
+
+.btn-arp:disabled { opacity: .5; cursor: default; }
+
 /* ─── Toggle Switch ─── */
 .toggle {
   margin-left: auto;

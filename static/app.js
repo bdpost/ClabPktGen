@@ -24,6 +24,8 @@ const els = {
   // TX packet config
   srcMac:           $('srcMac'),
   dstMac:           $('dstMac'),
+  arpTarget:        $('arpTarget'),
+  btnArpResolve:    $('btnArpResolve'),
   vlanEnable:       $('vlanEnable'),
   vlanFields:       $('vlanFields'),
   vlanId:           $('vlanId'),
@@ -187,6 +189,36 @@ els.dscpSelect.addEventListener('change', () => {
   if (els.dscpSelect.value !== '') {
     els.dscpValue.value = els.dscpSelect.value;
     els.dscpSelect.value = '';
+  }
+});
+
+// ─── TX interface change → update src MAC ─────────────────────────────────────
+els.iface.addEventListener('change', () => {
+  const mac = _ifaceHwaddrs[els.iface.value];
+  if (mac) els.srcMac.value = mac;
+});
+
+// ─── ARP Resolve ──────────────────────────────────────────────────────────────
+els.btnArpResolve.addEventListener('click', async () => {
+  const ip = els.arpTarget.value.trim();
+  if (!ip) { logTs('Enter a next-hop IP to ARP resolve.', 'warn'); return; }
+  els.btnArpResolve.disabled = true;
+  els.btnArpResolve.textContent = '...';
+  try {
+    const res = await fetch('/api/arp/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip, interface: els.iface.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'ARP failed');
+    els.dstMac.value = data.mac;
+    logTs(`Resolved ${ip} → ${data.mac} on ${data.interface}`, 'success');
+  } catch (err) {
+    logTs(`ARP resolve: ${err.message}`, 'error');
+  } finally {
+    els.btnArpResolve.disabled = false;
+    els.btnArpResolve.textContent = 'ARP';
   }
 });
 
@@ -434,11 +466,15 @@ els.btnRxIfaceDown.addEventListener('click', async () => {
 });
 
 // ─── Load interfaces ──────────────────────────────────────────────────────────
+let _ifaceHwaddrs = {};
+
 async function loadInterfaces() {
   try {
     const res = await fetch('/api/interfaces');
     if (!res.ok) return;
-    const { interfaces } = await res.json();
+    const { interfaces, hwaddrs } = await res.json();
+    _ifaceHwaddrs = hwaddrs || {};
+
     [els.iface, els.ifaceConfigIface, els.routeIface, els.rxIface, els.rxIfaceSelect, els.rxRouteIface].forEach(sel => {
       sel.innerHTML = '';
       interfaces.forEach(iface => {
@@ -450,6 +486,10 @@ async function loadInterfaces() {
       });
       if ([...sel.options].some(o => o.value === 'eth1')) sel.value = 'eth1';
     });
+
+    // Pre-populate src MAC with the actual TX interface MAC
+    const txMac = _ifaceHwaddrs[els.iface.value];
+    if (txMac) els.srcMac.value = txMac;
   } catch {
     logTs('Could not fetch interface list — defaulting to eth1.', 'warn');
   }

@@ -73,6 +73,11 @@ class RouteFlush(BaseModel):
     interface: str = "eth1"
 
 
+class ArpResolveRequest(BaseModel):
+    ip: str
+    interface: str = "eth1"
+
+
 # ─── RX models ────────────────────────────────────────────────────────────────
 
 class RxStartRequest(BaseModel):
@@ -141,7 +146,11 @@ async def status():
 
 @app.get("/api/interfaces")
 async def interfaces():
-    return {"interfaces": packet_gen.get_interfaces()}
+    ifaces = packet_gen.get_interfaces()
+    return {
+        "interfaces": ifaces,
+        "hwaddrs": {iface: packet_gen.get_hwaddr(iface) for iface in ifaces},
+    }
 
 
 # ─── Interface endpoints ──────────────────────────────────────────────────────
@@ -149,6 +158,8 @@ async def interfaces():
 @app.post("/api/interface/up")
 async def interface_up(req: InterfaceUp):
     try:
+        # Flush existing addresses first so re-configuring is always idempotent
+        subprocess.run(["ip", "addr", "flush", "dev", req.interface], capture_output=True)
         _ipcmd("addr", "add", req.ip, "dev", req.interface)
         _ipcmd("link", "set", req.interface, "up")
         return {"status": "ok", "interface": req.interface, "ip": req.ip}
@@ -198,6 +209,33 @@ async def route_flush(req: RouteFlush):
         return {"status": "ok", "interface": req.interface}
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── ARP endpoints ────────────────────────────────────────────────────────────
+
+@app.post("/api/arp/resolve")
+async def arp_resolve(req: ArpResolveRequest):
+    """Ping the target to populate the ARP table, then return its MAC."""
+    subprocess.run(
+        ["ping", "-c", "1", "-W", "2", "-I", req.interface, req.ip],
+        capture_output=True,
+    )
+    result = subprocess.run(
+        ["ip", "neigh", "show", req.ip, "dev", req.interface],
+        capture_output=True, text=True,
+    )
+    mac = None
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if "lladdr" in parts:
+            mac = parts[parts.index("lladdr") + 1]
+            break
+    if not mac:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No ARP entry for {req.ip} on {req.interface} — configure the interface IP first",
+        )
+    return {"ip": req.ip, "interface": req.interface, "mac": mac}
 
 
 # ─── RX endpoints ─────────────────────────────────────────────────────────────

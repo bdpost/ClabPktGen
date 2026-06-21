@@ -59,12 +59,16 @@
         <section class="card">
           <h2><span class="badge l2">L2</span>Ethernet</h2>
           <div class="field">
-            <label for="srcMac">Source MAC</label>
+            <label for="srcMac">Source MAC <span class="hint">auto-filled from TX interface</span></label>
             <input id="srcMac" type="text" value="de:ad:be:ef:00:01" spellcheck="false">
           </div>
           <div class="field">
-            <label for="dstMac">Destination MAC</label>
+            <label for="dstMac">Destination MAC <span class="hint">next-hop router</span></label>
             <input id="dstMac" type="text" value="ff:ff:ff:ff:ff:ff" spellcheck="false">
+            <div class="arp-row">
+              <input id="arpTarget" type="text" placeholder="Next-hop IP to ARP resolve" spellcheck="false">
+              <button id="btnArpResolve" class="btn-arp">ARP</button>
+            </div>
           </div>
         </section>
 
