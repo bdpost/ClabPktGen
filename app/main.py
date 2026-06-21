@@ -7,12 +7,12 @@ from io import BytesIO
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from scapy.all import wrpcap
+from scapy.all import PcapWriter
 from pydantic import BaseModel
 
 import packet_gen
 
-app = FastAPI(title="ClabPktGen")
+app = FastAPI(title="PktGen")
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static), name="static")
@@ -33,10 +33,11 @@ class PacketConfig(BaseModel):
     vlan_id: Optional[int] = None
     vlan_pcp: int = 0
     dscp: int = 0
-    protocol: str = "udp"
+    protocol: str = "tcp"
     src_port: int = 12345
     dst_port: int = 80
-    payload: str = "ClabPktGen"
+    payload: str = "PktGen"
+    pkt_size: Optional[int] = None
 
 
 class SendRequest(PacketConfig):
@@ -45,7 +46,7 @@ class SendRequest(PacketConfig):
 
 
 class StreamRequest(PacketConfig):
-    rate: float = 10.0
+    rate: float = 2.0
     interface: str = "eth1"
 
 
@@ -278,7 +279,8 @@ async def rx_pcap():
     if not pkts:
         raise HTTPException(status_code=404, detail="No packets captured")
     buf = BytesIO()
-    wrpcap(buf, pkts)
+    pw = PcapWriter(buf, sync=True)
+    pw.write(pkts)
     buf.seek(0)
     return StreamingResponse(
         buf,

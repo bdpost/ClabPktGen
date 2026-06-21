@@ -59,8 +59,18 @@ def _build_packet(cfg: dict):
         transport = ICMP()
     else:
         transport = UDP(sport=cfg.get("src_port", 12345), dport=cfg.get("dst_port", 80))
-    payload = cfg.get("payload", "ClabPktGen")
-    return eth / ip / transport / Raw(load=payload.encode())
+
+    payload_bytes = (cfg.get("payload", "PktGen") or "PktGen").encode()
+    pkt_size = cfg.get("pkt_size")
+    if pkt_size and pkt_size > 0:
+        header_len = len(eth / ip / transport)
+        fill_len = max(0, pkt_size - header_len)
+        if fill_len > 0 and payload_bytes:
+            payload_bytes = (payload_bytes * ((fill_len // len(payload_bytes)) + 1))[:fill_len]
+        else:
+            payload_bytes = b'\x00' * fill_len
+
+    return eth / ip / transport / Raw(load=payload_bytes)
 
 
 def send_fixed(cfg: dict, count: int, iface: str) -> int:
@@ -225,7 +235,7 @@ def _handle_tcp_conn(conn: socket.socket):
             data = conn.recv(4096)
             if not data:
                 break
-            conn.sendall(b"ClabPktGen ACK: " + data)
+            conn.sendall(b"PktGen ACK: " + data)
     except Exception:
         pass
     finally:
@@ -267,7 +277,7 @@ def _listener_udp_worker(bind_ip: str, port: int):
             with _listener_lock:
                 _listener_count += 1
             try:
-                sock.sendto(b"ClabPktGen ACK: " + data, addr)
+                sock.sendto(b"PktGen ACK: " + data, addr)
             except Exception:
                 pass
     finally:

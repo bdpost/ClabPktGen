@@ -2,7 +2,7 @@
 
 // ─── TX State ─────────────────────────────────────────────────────────────────
 let mode     = 'fixed';
-let protocol = 'udp';
+let protocol = 'tcp';
 let sending  = false;
 let pollTimer = null;
 
@@ -40,6 +40,8 @@ const els = {
   iface:            $('iface'),
   pktCount:         $('pktCount'),
   pktRate:          $('pktRate'),
+  pktSize:          $('pktSize'),
+  pktSizePreset:    $('pktSizePreset'),
   fixedFields:      $('fixedFields'),
   continuousFields: $('continuousFields'),
   payload:          $('payload'),
@@ -190,6 +192,14 @@ els.dscpSelect.addEventListener('change', () => {
   if (els.dscpSelect.value !== '') {
     els.dscpValue.value = els.dscpSelect.value;
     els.dscpSelect.value = '';
+  }
+});
+
+// ─── Frame size preset ────────────────────────────────────────────────────────
+els.pktSizePreset.addEventListener('change', () => {
+  if (els.pktSizePreset.value !== '') {
+    els.pktSize.value = els.pktSizePreset.value;
+    els.pktSizePreset.value = '';
   }
 });
 
@@ -505,7 +515,7 @@ function buildConfig() {
     dst_ip:    els.dstIp.value.trim(),
     dscp:      parseInt(els.dscpValue.value) || 0,
     protocol,
-    payload:   els.payload.value || 'ClabPktGen',
+    payload:   els.payload.value || 'PktGen',
     interface: els.iface.value,
   };
   if (protocol !== 'icmp') {
@@ -516,6 +526,8 @@ function buildConfig() {
     cfg.vlan_id  = parseInt(els.vlanId.value)  || 100;
     cfg.vlan_pcp = parseInt(els.vlanPcp.value) || 0;
   }
+  const pktSize = parseInt(els.pktSize.value) || 0;
+  if (pktSize > 0) cfg.pkt_size = pktSize;
   return cfg;
 }
 
@@ -808,4 +820,4 @@ els.btnClear.addEventListener('click', () => { els.logOutput.innerHTML = ''; });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 loadInterfaces();
-logTs('ClabPktGen ready.', 'info');
+logTs('PktGen ready.', 'info');

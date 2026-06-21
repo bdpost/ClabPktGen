@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ClabPktGen</title>
+  <title>PktGen</title>
+  <link rel="icon" type="image/png" href="/static/pktgen-logo.png">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -11,13 +12,8 @@
 <header>
   <div class="header-inner">
     <div class="logo">
-      <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
-        <line x1="12" y1="2" x2="12" y2="22"/>
-        <line x1="2" y1="8.5" x2="22" y2="8.5"/>
-        <line x1="2" y1="15.5" x2="22" y2="15.5"/>
-      </svg>
-      <span>ClabPktGen</span>
+      <img src="/static/pktgen-logo.png" alt="PktGen" class="logo-icon">
+      <span>PktGen</span>
     </div>
     <div class="header-badges">
       <div id="statusBadge" class="status-badge idle">
@@ -54,6 +50,56 @@
 
       <!-- ─── LEFT COLUMN ─── -->
       <div class="col">
+
+        <!-- Interface Config -->
+        <section class="card">
+          <h2>
+            <span class="badge net">NET</span>Interface Config
+            <span id="ifacePill" class="iface-pill hidden"></span>
+          </h2>
+          <div class="field-row">
+            <div class="field">
+              <label for="ifaceConfigIface">Interface</label>
+              <select id="ifaceConfigIface">
+                <option value="eth1">eth1</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ifaceIp">IP / Prefix</label>
+              <input id="ifaceIp" type="text" value="10.1.1.2/24" spellcheck="false">
+            </div>
+          </div>
+          <div class="iface-actions">
+            <button id="btnIfaceUp" class="btn btn-success">Configure</button>
+            <button id="btnIfaceDown" class="btn btn-danger">Reset</button>
+          </div>
+        </section>
+
+        <!-- Routes -->
+        <section class="card">
+          <h2><span class="badge rt">RT</span>Routes</h2>
+          <div class="field-row">
+            <div class="field">
+              <label for="routeDst">Destination</label>
+              <input id="routeDst" type="text" placeholder="10.0.0.0/8" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="routeNh">Next Hop</label>
+              <input id="routeNh" type="text" placeholder="10.1.1.1" spellcheck="false">
+            </div>
+          </div>
+          <div class="field-row" style="align-items:flex-end">
+            <div class="field" style="margin-bottom:0">
+              <label for="routeIface">Interface</label>
+              <select id="routeIface">
+                <option value="eth1">eth1</option>
+              </select>
+            </div>
+            <button id="btnRouteAdd" class="btn btn-primary" style="margin-bottom:0">Add Route</button>
+          </div>
+          <div id="routeList" class="route-list"></div>
+          <button id="btnRouteClear" class="btn-link route-clear hidden">Clear All Routes</button>
+        </section>
 
         <!-- Layer 2 -->
         <section class="card">
@@ -143,64 +189,14 @@
       <!-- ─── RIGHT COLUMN ─── -->
       <div class="col">
 
-        <!-- Interface Config -->
-        <section class="card">
-          <h2>
-            <span class="badge net">NET</span>Interface Config
-            <span id="ifacePill" class="iface-pill hidden"></span>
-          </h2>
-          <div class="field-row">
-            <div class="field">
-              <label for="ifaceConfigIface">Interface</label>
-              <select id="ifaceConfigIface">
-                <option value="eth1">eth1</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="ifaceIp">IP / Prefix</label>
-              <input id="ifaceIp" type="text" value="10.1.1.2/24" spellcheck="false">
-            </div>
-          </div>
-          <div class="iface-actions">
-            <button id="btnIfaceUp" class="btn btn-success">Configure</button>
-            <button id="btnIfaceDown" class="btn btn-danger">Reset</button>
-          </div>
-        </section>
-
-        <!-- Routes -->
-        <section class="card">
-          <h2><span class="badge rt">RT</span>Routes</h2>
-          <div class="field-row">
-            <div class="field">
-              <label for="routeDst">Destination</label>
-              <input id="routeDst" type="text" placeholder="10.0.0.0/8" spellcheck="false">
-            </div>
-            <div class="field">
-              <label for="routeNh">Next Hop</label>
-              <input id="routeNh" type="text" placeholder="10.1.1.1" spellcheck="false">
-            </div>
-          </div>
-          <div class="field-row" style="align-items:flex-end">
-            <div class="field" style="margin-bottom:0">
-              <label for="routeIface">Interface</label>
-              <select id="routeIface">
-                <option value="eth1">eth1</option>
-              </select>
-            </div>
-            <button id="btnRouteAdd" class="btn btn-primary" style="margin-bottom:0">Add Route</button>
-          </div>
-          <div id="routeList" class="route-list"></div>
-          <button id="btnRouteClear" class="btn-link route-clear hidden">Clear All Routes</button>
-        </section>
-
         <!-- Layer 4 -->
         <section class="card">
           <h2><span class="badge l4">L4</span>Transport</h2>
           <div class="field">
             <label>Protocol</label>
             <div class="seg-group" id="protoGroup">
-              <button class="seg active" data-value="udp">UDP</button>
-              <button class="seg" data-value="tcp">TCP</button>
+              <button class="seg" data-value="udp">UDP</button>
+              <button class="seg active" data-value="tcp">TCP</button>
               <button class="seg" data-value="icmp">ICMP</button>
             </div>
           </div>
@@ -241,7 +237,24 @@
           <div id="continuousFields" class="collapsible collapsed">
             <div class="field">
               <label for="pktRate">Rate <span class="hint">pps</span></label>
-              <input id="pktRate" type="number" value="10" min="1" max="1000000">
+              <input id="pktRate" type="number" value="2" min="1" max="1000000">
+            </div>
+          </div>
+          <div class="field">
+            <label for="pktSize">Frame Size <span class="hint">bytes · 0 = natural</span></label>
+            <div class="dscp-row">
+              <input id="pktSize" type="number" value="0" min="0" max="9000">
+              <select id="pktSizePreset">
+                <option value="">— Preset —</option>
+                <option value="64">64 — min Ethernet</option>
+                <option value="128">128</option>
+                <option value="256">256</option>
+                <option value="512">512</option>
+                <option value="1024">1024</option>
+                <option value="1280">1280</option>
+                <option value="1500">1500 — max std</option>
+                <option value="9000">9000 — jumbo</option>
+              </select>
             </div>
           </div>
         </section>
@@ -251,7 +264,7 @@
           <h2><span class="badge pay">PAY</span>Payload</h2>
           <div class="field">
             <label for="payload">ASCII Payload</label>
-            <input id="payload" type="text" value="ClabPktGen" spellcheck="false">
+            <input id="payload" type="text" value="PktGen" spellcheck="false">
           </div>
         </section>
 
@@ -272,7 +285,7 @@
   <div id="panel-rx" class="panel hidden">
     <div class="grid">
 
-      <!-- ─── LEFT COLUMN: Interface + Socket Listener ─── -->
+      <!-- ─── LEFT COLUMN: Interface + Routes ─── -->
       <div class="col">
 
         <!-- Interface Config -->
@@ -325,6 +338,11 @@
           <button id="btnRxRouteClear" class="btn-link route-clear hidden">Clear All Routes</button>
         </section>
 
+      </div><!-- /left col -->
+
+      <!-- ─── RIGHT COLUMN: Socket Listener + Passive Capture ─── -->
+      <div class="col">
+
         <!-- Socket Listener -->
         <section class="card">
           <h2><span class="badge rx">SKT</span>Socket Listener</h2>
@@ -355,11 +373,7 @@
           </div>
         </section>
 
-      </div><!-- /left col -->
-
-      <!-- ─── RIGHT COLUMN: Passive Capture ─── -->
-      <div class="col">
-
+        <!-- Passive Capture -->
         <section class="card">
           <h2>
             <span class="badge cap">CAP</span>Passive Capture
