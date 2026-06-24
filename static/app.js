@@ -209,6 +209,18 @@ els.iface.addEventListener('change', () => {
   if (mac) els.srcMac.value = mac;
 });
 
+// ─── Config interface change → pre-fill existing IP ───────────────────────────
+els.ifaceConfigIface.addEventListener('change', () => {
+  const existing = _ifaceAddrs[els.ifaceConfigIface.value];
+  if (existing) {
+    els.ifaceIp.value = existing;
+    els.ifacePill.textContent = existing;
+    els.ifacePill.classList.remove('hidden');
+  } else {
+    els.ifacePill.classList.add('hidden');
+  }
+});
+
 // ─── ARP Resolve ──────────────────────────────────────────────────────────────
 els.btnArpResolve.addEventListener('click', async () => {
   const ip = els.arpTarget.value.trim();
@@ -478,17 +490,19 @@ els.btnRxIfaceDown.addEventListener('click', async () => {
 
 // ─── Load interfaces ──────────────────────────────────────────────────────────
 let _ifaceHwaddrs = {};
+let _ifaceAddrs   = {};
 
 async function loadInterfaces() {
   try {
     const res = await fetch('/api/interfaces');
     if (!res.ok) return;
-    const { interfaces, hwaddrs } = await res.json();
+    const { interfaces, hwaddrs, addrs, mgmt } = await res.json();
     _ifaceHwaddrs = hwaddrs || {};
+    _ifaceAddrs   = addrs   || {};
 
     const preferred = interfaces.includes('eth1')
       ? 'eth1'
-      : interfaces.find(i => i !== 'lo' && i !== 'eth0') || interfaces[0] || 'eth1';
+      : interfaces.find(i => i !== mgmt) || interfaces[0] || 'eth1';
 
     [els.iface, els.ifaceConfigIface, els.routeIface, els.rxIface, els.rxIfaceSelect, els.rxRouteIface].forEach(sel => {
       sel.innerHTML = '';
@@ -505,6 +519,14 @@ async function loadInterfaces() {
     // Pre-populate src MAC with the actual TX interface MAC
     const txMac = _ifaceHwaddrs[els.iface.value];
     if (txMac) els.srcMac.value = txMac;
+
+    // Pre-populate IP field with the existing address on the config interface (if any)
+    const existingIp = _ifaceAddrs[els.ifaceConfigIface.value];
+    if (existingIp) {
+      els.ifaceIp.value = existingIp;
+      els.ifacePill.textContent = existingIp;
+      els.ifacePill.classList.remove('hidden');
+    }
   } catch {
     logTs('Could not fetch interface list — defaulting to eth1.', 'warn');
   }

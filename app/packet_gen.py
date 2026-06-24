@@ -1,5 +1,6 @@
 import datetime
 import socket
+import subprocess
 import threading
 from collections import deque
 from scapy.all import (
@@ -33,8 +34,13 @@ _listener_count = 0   # TCP: connections accepted  |  UDP: datagrams received
 _listener_lock = threading.Lock()
 
 
+_VIRT_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "dummy", "bond", "tun", "tap")
+
 def get_interfaces() -> list[str]:
-    return get_if_list()
+    return [
+        i for i in get_if_list()
+        if not any(i == p or i.startswith(p) for p in _VIRT_PREFIXES)
+    ]
 
 
 def get_hwaddr(iface: str) -> str:
@@ -42,6 +48,21 @@ def get_hwaddr(iface: str) -> str:
         return get_if_hwaddr(iface)
     except Exception:
         return ""
+
+
+def get_iface_addr(iface: str) -> str:
+    """Return the first IPv4 address (CIDR) on iface, or '' if none assigned."""
+    try:
+        out = subprocess.check_output(
+            ["ip", "-4", "addr", "show", iface], text=True
+        )
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("inet "):
+                return line.split()[1]  # e.g. "10.192.160.101/24"
+    except Exception:
+        pass
+    return ""
 
 
 # ─── TX ───────────────────────────────────────────────────────────────────────

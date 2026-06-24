@@ -13,15 +13,30 @@ from pydantic import BaseModel, Field
 import packet_gen
 
 
+def _mgmt_iface() -> str:
+    """Return the interface that holds the default route (management plane)."""
+    try:
+        out = subprocess.check_output(
+            ["ip", "route", "show", "default"], text=True
+        )
+        for token in out.split():
+            if token == "dev":
+                return out.split()[out.split().index("dev") + 1]
+    except Exception:
+        pass
+    return "eth0"
+
+
 def _default_iface() -> str:
-    """Return eth1 if present; otherwise the first non-loopback, non-mgmt interface."""
+    """Return eth1 if present; otherwise the first non-mgmt physical interface."""
     ifaces = packet_gen.get_interfaces()
     if "eth1" in ifaces:
         return "eth1"
+    mgmt = _mgmt_iface()
     for iface in ifaces:
-        if iface not in ("lo", "eth0"):
+        if iface != mgmt:
             return iface
-    return "eth1"
+    return ifaces[0] if ifaces else "eth1"
 
 app = FastAPI(title="PktGen")
 
@@ -165,6 +180,8 @@ async def interfaces():
     return {
         "interfaces": ifaces,
         "hwaddrs": {iface: packet_gen.get_hwaddr(iface) for iface in ifaces},
+        "addrs":   {iface: packet_gen.get_iface_addr(iface) for iface in ifaces},
+        "mgmt": _mgmt_iface(),
     }
 
 
