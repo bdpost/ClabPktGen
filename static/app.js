@@ -58,6 +58,7 @@ const els = {
   ifaceConfigIface: $('ifaceConfigIface'),
   ifaceIp:          $('ifaceIp'),
   ifacePill:        $('ifacePill'),
+  btnGetIp:         $('btnGetIp'),
   btnIfaceUp:       $('btnIfaceUp'),
   btnIfaceDown:     $('btnIfaceDown'),
   // Routes
@@ -81,6 +82,7 @@ const els = {
   rxIfaceSelect:      $('rxIfaceSelect'),
   rxIfaceIp:          $('rxIfaceIp'),
   rxIfacePill:        $('rxIfacePill'),
+  btnRxGetIp:         $('btnRxGetIp'),
   btnRxIfaceUp:       $('btnRxIfaceUp'),
   btnRxIfaceDown:     $('btnRxIfaceDown'),
   // Socket listener
@@ -220,6 +222,32 @@ els.ifaceConfigIface.addEventListener('change', () => {
     els.ifacePill.classList.add('hidden');
   }
 });
+
+// ─── Get IP buttons ───────────────────────────────────────────────────────────
+async function fetchIfaceAddr(iface, ipEl, pillEl) {
+  try {
+    const res = await fetch('/api/interfaces');
+    const { addrs } = await res.json();
+    _ifaceAddrs = { ..._ifaceAddrs, ...addrs };
+    const ip = addrs[iface];
+    if (ip) {
+      ipEl.value = ip;
+      pillEl.textContent = ip;
+      pillEl.classList.remove('hidden');
+      logTs(`${iface} → ${ip}`, 'success');
+    } else {
+      logTs(`No IP assigned on ${iface}`, 'warn');
+    }
+  } catch (err) {
+    logTs(`Get IP error: ${err.message}`, 'error');
+  }
+}
+
+els.btnGetIp.addEventListener('click', () =>
+  fetchIfaceAddr(els.ifaceConfigIface.value, els.ifaceIp, els.ifacePill));
+
+els.btnRxGetIp.addEventListener('click', () =>
+  fetchIfaceAddr(els.rxIfaceSelect.value, els.rxIfaceIp, els.rxIfacePill));
 
 // ─── ARP Resolve ──────────────────────────────────────────────────────────────
 els.btnArpResolve.addEventListener('click', async () => {

@@ -451,9 +451,10 @@ select {
 .btn:active { transform: scale(.98); }
 .btn:hover  { filter: brightness(1.1); }
 
-.btn-primary { background: var(--accent);  color: #fff; }
-.btn-success { background: var(--green);   color: #fff; }
-.btn-danger  { background: var(--red);     color: #fff; }
+.btn-primary   { background: var(--accent);   color: #fff; }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); }
+.btn-success   { background: var(--green);    color: #fff; }
+.btn-danger    { background: var(--red);      color: #fff; }
 
 .btn-link {
   background: none;
