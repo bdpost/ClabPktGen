@@ -134,6 +134,7 @@ class Iperf3StartRequest(BaseModel):
     parallel: int = 1
     reverse: bool = False
     one_off: bool = False
+    bind_iface: str = ""       # derive source IP from this interface
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -359,6 +360,16 @@ async def listener_status():
 
 @app.post("/api/iperf3/start")
 async def iperf3_start(req: Iperf3StartRequest):
+    bind_ip = ""
+    if req.bind_iface:
+        cidr = packet_gen.get_iface_addr(req.bind_iface)
+        if not cidr:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No IP assigned on {req.bind_iface} — configure the interface first",
+            )
+        bind_ip = cidr.split("/")[0]
+
     ok, msg = packet_gen.start_iperf3(
         mode=req.mode,
         host=req.host,
@@ -369,10 +380,11 @@ async def iperf3_start(req: Iperf3StartRequest):
         parallel=req.parallel,
         reverse=req.reverse,
         one_off=req.one_off,
+        bind_ip=bind_ip,
     )
     if not ok:
         raise HTTPException(status_code=409, detail=msg)
-    return {"status": "ok", "message": msg}
+    return {"status": "ok", "message": msg, "bind_ip": bind_ip}
 
 
 @app.post("/api/iperf3/stop")

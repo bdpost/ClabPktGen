@@ -399,6 +399,9 @@ def start_iperf3(mode: str, **kwargs) -> tuple[bool, str]:
         if not host:
             return False, "Target host is required for client mode"
         cmd += ['-c', host, '-p', str(kwargs.get('port', 5201))]
+        bind_ip = str(kwargs.get('bind_ip', '')).strip()
+        if bind_ip:
+            cmd += ['-B', bind_ip]
         if str(kwargs.get('protocol', 'tcp')).lower() == 'udp':
             cmd.append('-u')
         cmd += ['-t', str(int(kwargs.get('duration', 10)))]

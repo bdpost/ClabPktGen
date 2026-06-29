@@ -119,6 +119,7 @@ const els = {
   btnRxClear:         $('btnRxClear'),
   btnDownloadPcap:    $('btnDownloadPcap'),
   // iperf3
+  iperfIface:         $('iperfIface'),
   iperfHost:          $('iperfHost'),
   iperfClientPort:    $('iperfClientPort'),
   iperfDuration:      $('iperfDuration'),
@@ -590,6 +591,16 @@ async function loadInterfaces() {
       if ([...sel.options].some(o => o.value === preferred)) sel.value = preferred;
     });
 
+    // iperf3 source interface — prepend "any" option then list interfaces
+    els.iperfIface.innerHTML = '<option value="">— any (default) —</option>';
+    interfaces.forEach(iface => {
+      const opt = document.createElement('option');
+      opt.value = iface;
+      const ip = _ifaceAddrs[iface];
+      opt.textContent = ip ? `${iface}  (${ip.split('/')[0]})` : iface;
+      els.iperfIface.appendChild(opt);
+    });
+
     // Pre-populate src MAC with the actual TX interface MAC
     const txMac = _ifaceHwaddrs[els.iface.value];
     if (txMac) els.srcMac.value = txMac;
@@ -940,13 +951,14 @@ els.btnIperfStart.addEventListener('click', async () => {
   if (iperfMode === 'client') {
     const host = els.iperfHost.value.trim();
     if (!host) { logTs('Target host is required for iperf3 client.', 'warn'); return; }
-    body.host      = host;
-    body.port      = parseInt(els.iperfClientPort.value) || 5201;
-    body.protocol  = iperfProto;
-    body.duration  = parseInt(els.iperfDuration.value) || 10;
-    body.bandwidth = els.iperfBandwidth.value.trim();
-    body.parallel  = parseInt(els.iperfParallel.value) || 1;
-    body.reverse   = iperfDir === 'reverse';
+    body.host        = host;
+    body.port        = parseInt(els.iperfClientPort.value) || 5201;
+    body.protocol    = iperfProto;
+    body.duration    = parseInt(els.iperfDuration.value) || 10;
+    body.bandwidth   = els.iperfBandwidth.value.trim();
+    body.parallel    = parseInt(els.iperfParallel.value) || 1;
+    body.reverse     = iperfDir === 'reverse';
+    body.bind_iface  = els.iperfIface.value;
   } else {
     body.port    = parseInt(els.iperfServerPort.value) || 5201;
     body.one_off = els.iperfOneOff.checked;
@@ -968,7 +980,8 @@ els.btnIperfStart.addEventListener('click', async () => {
     els.iperfLiveCounter.classList.remove('hidden');
     els.btnIperfStart.disabled = false;
     setIperfStatus('sending', 'RUNNING');
-    logTs(`iperf3: ${data.message}`, 'success');
+    const bindNote = data.bind_ip ? ` (bind ${data.bind_ip})` : '';
+    logTs(`iperf3: ${data.message}${bindNote}`, 'success');
     startIperfPoll();
   } catch (err) {
     logTs(`iperf3 error: ${err.message}`, 'error');
