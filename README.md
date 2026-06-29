@@ -53,13 +53,13 @@ Your PAT needs the `write:packages` scope. Create one at **GitHub â†’ Settings â
 ### 2. Build the image
 
 ```bash
-docker build -t ghcr.io/bdpost/pktgen:0.0.13 -t ghcr.io/bdpost/pktgen:latest .
+docker build -t ghcr.io/bdpost/pktgen:0.0.14 -t ghcr.io/bdpost/pktgen:latest .
 ```
 
 ### 3. Push
 
 ```bash
-docker push ghcr.io/bdpost/pktgen:0.0.13
+docker push ghcr.io/bdpost/pktgen:0.0.14
 docker push ghcr.io/bdpost/pktgen:latest
 ```
 
@@ -385,7 +385,7 @@ docker run -d \
   --privileged \
   --restart unless-stopped \
   -e PYTHONUNBUFFERED=1 \
-  ghcr.io/bdpost/pktgen:0.0.13
+  ghcr.io/bdpost/pktgen:0.0.14
 ```
 
 Access the GUI at `http://<host-ip>:8080`.
