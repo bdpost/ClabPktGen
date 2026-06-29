@@ -26,6 +26,11 @@
         <span class="badge-label">RX</span>
         <span id="rxStatusText">IDLE</span>
       </div>
+      <div id="iperfStatusBadge" class="status-badge idle">
+        <span class="status-dot"></span>
+        <span class="badge-label">PERF</span>
+        <span id="iperfStatusText">IDLE</span>
+      </div>
     </div>
   </div>
 </header>
@@ -39,6 +44,9 @@
     </button>
     <button class="mode-tab" data-tab="rx">
       <span class="badge rx">RX</span>Receive
+    </button>
+    <button class="mode-tab" data-tab="iperf3">
+      <span class="badge perf">PERF</span>iperf3
     </button>
   </div>
 
@@ -371,7 +379,10 @@
           </div>
           <div id="listenerStats" class="listener-stats hidden">
             <span class="pulse-dot"></span>
-            <span id="listenerCount">0</span>&thinsp;<span id="listenerCountLabel">connections</span> accepted
+            <span id="listenerIdleMsg">Listening&hellip;</span>
+            <span id="listenerCountMsg" class="hidden">
+              <span id="listenerCount">0</span>&thinsp;<span id="listenerCountLabel">connections</span> accepted
+            </span>
           </div>
         </section>
 
@@ -445,6 +456,117 @@
     </section>
 
   </div><!-- /panel-rx -->
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       IPERF3 PANEL
+       ════════════════════════════════════════════════════════════════════ -->
+  <div id="panel-iperf3" class="panel hidden">
+    <div class="grid">
+
+      <!-- ─── LEFT COLUMN: Mode + Config ─── -->
+      <div class="col">
+
+        <section class="card">
+          <h2><span class="badge perf">PERF</span>iperf3 Mode</h2>
+          <div class="field">
+            <label>Role</label>
+            <div class="seg-group" id="iperfModeGroup">
+              <button class="seg active" data-value="client">Client</button>
+              <button class="seg" data-value="server">Server</button>
+            </div>
+          </div>
+
+          <!-- Client fields -->
+          <div id="iperfClientFields">
+            <div class="field-row">
+              <div class="field">
+                <label for="iperfHost">Target Host</label>
+                <input id="iperfHost" type="text" placeholder="10.1.1.1" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="iperfClientPort">Port</label>
+                <input id="iperfClientPort" type="number" value="5201" min="1" max="65535">
+              </div>
+            </div>
+            <div class="field">
+              <label>Protocol</label>
+              <div class="seg-group" id="iperfProtoGroup">
+                <button class="seg active" data-value="tcp">TCP</button>
+                <button class="seg" data-value="udp">UDP</button>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="iperfDuration">Duration <span class="hint">seconds</span></label>
+                <input id="iperfDuration" type="number" value="10" min="1" max="3600">
+              </div>
+              <div class="field">
+                <label for="iperfParallel">Parallel Streams</label>
+                <input id="iperfParallel" type="number" value="1" min="1" max="128">
+              </div>
+            </div>
+            <div class="field">
+              <label for="iperfBandwidth">Bandwidth <span class="hint">e.g. 100M, 1G — blank = unlimited</span></label>
+              <input id="iperfBandwidth" type="text" placeholder="100M" spellcheck="false">
+            </div>
+            <div class="field">
+              <label>Direction</label>
+              <div class="seg-group" id="iperfDirGroup">
+                <button class="seg active" data-value="normal">Normal (→)</button>
+                <button class="seg" data-value="reverse">Reverse (←)</button>
+              </div>
+            </div>
+          </div><!-- /iperfClientFields -->
+
+          <!-- Server fields -->
+          <div id="iperfServerFields" class="hidden">
+            <div class="field">
+              <label for="iperfServerPort">Port</label>
+              <input id="iperfServerPort" type="number" value="5201" min="1" max="65535">
+            </div>
+            <div class="field">
+              <label>
+                One-off <span class="hint">exit after first client disconnects</span>
+                <label class="toggle" title="Run once then exit" style="margin-left:auto">
+                  <input type="checkbox" id="iperfOneOff">
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+              </label>
+            </div>
+          </div><!-- /iperfServerFields -->
+
+        </section>
+
+        <!-- Actions -->
+        <section class="card actions-card">
+          <button id="btnIperfStart" class="btn btn-success">Start iperf3</button>
+          <button id="btnIperfStop" class="btn btn-danger hidden">Stop iperf3</button>
+        </section>
+
+      </div><!-- /left col -->
+
+      <!-- ─── RIGHT COLUMN: Output ─── -->
+      <div class="col">
+
+        <section class="card">
+          <div class="log-header">
+            <h2>
+              <span class="badge perf">PERF</span>Output
+              <span id="iperfLiveCounter" class="live-counter hidden" style="margin-left:auto">
+                <span class="pulse-dot"></span>
+                <span id="iperfLineCount">0</span> lines
+              </span>
+            </h2>
+            <div class="log-meta">
+              <button id="btnIperfClear" class="btn-link">Clear</button>
+            </div>
+          </div>
+          <div id="iperfOutput" class="log-output" style="max-height:480px; min-height:200px; font-size:0.8rem;"></div>
+        </section>
+
+      </div><!-- /right col -->
+    </div><!-- /grid -->
+  </div><!-- /panel-iperf3 -->
 
   <!-- ─── Log (always visible) ─── -->
   <section class="card log-card">

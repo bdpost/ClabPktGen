@@ -17,6 +17,14 @@ let listenerProto     = 'tcp';
 let listenerPollTimer = null;
 let listenerRunning   = false;
 
+// ─── iperf3 State ─────────────────────────────────────────────────────────────
+let iperfMode      = 'client';
+let iperfProto     = 'tcp';
+let iperfDir       = 'normal';
+let iperfPollTimer = null;
+let iperfRunning   = false;
+let iperfSince     = 0;
+
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
@@ -91,6 +99,8 @@ const els = {
   btnListenerStart:   $('btnListenerStart'),
   btnListenerStop:    $('btnListenerStop'),
   listenerStats:      $('listenerStats'),
+  listenerIdleMsg:    $('listenerIdleMsg'),
+  listenerCountMsg:   $('listenerCountMsg'),
   listenerCount:      $('listenerCount'),
   listenerCountLabel: $('listenerCountLabel'),
   // Passive capture
@@ -108,6 +118,24 @@ const els = {
   captureBody:        $('captureBody'),
   btnRxClear:         $('btnRxClear'),
   btnDownloadPcap:    $('btnDownloadPcap'),
+  // iperf3
+  iperfHost:          $('iperfHost'),
+  iperfClientPort:    $('iperfClientPort'),
+  iperfDuration:      $('iperfDuration'),
+  iperfParallel:      $('iperfParallel'),
+  iperfBandwidth:     $('iperfBandwidth'),
+  iperfServerPort:    $('iperfServerPort'),
+  iperfOneOff:        $('iperfOneOff'),
+  iperfClientFields:  $('iperfClientFields'),
+  iperfServerFields:  $('iperfServerFields'),
+  btnIperfStart:      $('btnIperfStart'),
+  btnIperfStop:       $('btnIperfStop'),
+  iperfOutput:        $('iperfOutput'),
+  btnIperfClear:      $('btnIperfClear'),
+  iperfLiveCounter:   $('iperfLiveCounter'),
+  iperfLineCount:     $('iperfLineCount'),
+  iperfStatusBadge:   $('iperfStatusBadge'),
+  iperfStatusText:    $('iperfStatusText'),
 };
 
 // ─── Logging ──────────────────────────────────────────────────────────────────
@@ -133,6 +161,11 @@ function setStatus(state, text) {
 function setRxStatus(state, text) {
   els.rxStatusBadge.className = `status-badge ${state}`;
   els.rxStatusText.textContent = text;
+}
+
+function setIperfStatus(state, text) {
+  els.iperfStatusBadge.className = `status-badge ${state}`;
+  els.iperfStatusText.textContent = text;
 }
 
 // ─── Tab Bar ──────────────────────────────────────────────────────────────────
@@ -183,6 +216,19 @@ wireSegGroup('listenerProtoGroup', val => {
   listenerProto = val;
   els.listenerCountLabel.textContent = val === 'tcp' ? 'connections' : 'datagrams';
 });
+
+// ─── iperf3 Mode toggle ───────────────────────────────────────────────────────
+wireSegGroup('iperfModeGroup', val => {
+  iperfMode = val;
+  els.iperfClientFields.classList.toggle('hidden', val !== 'client');
+  els.iperfServerFields.classList.toggle('hidden', val !== 'server');
+});
+
+// ─── iperf3 Protocol toggle ───────────────────────────────────────────────────
+wireSegGroup('iperfProtoGroup', val => { iperfProto = val; });
+
+// ─── iperf3 Direction toggle ──────────────────────────────────────────────────
+wireSegGroup('iperfDirGroup', val => { iperfDir = val; });
 
 // ─── VLAN toggle ──────────────────────────────────────────────────────────────
 els.vlanEnable.addEventListener('change', () => {
@@ -821,7 +867,8 @@ els.btnListenerStart.addEventListener('click', async () => {
     els.btnListenerStart.classList.add('hidden');
     els.btnListenerStop.classList.remove('hidden');
     els.listenerStats.classList.remove('hidden');
-    els.listenerCount.textContent = '0';
+    els.listenerIdleMsg.classList.remove('hidden');
+    els.listenerCountMsg.classList.add('hidden');
     setRxStatus('receiving', 'LISTEN');
     logTs(`Listener: ${data.message}`, 'success');
     startListenerPoll();
@@ -854,7 +901,14 @@ function startListenerPoll() {
     try {
       const res  = await fetch('/api/listener/status');
       const data = await res.json();
-      els.listenerCount.textContent = data.count.toLocaleString();
+      if (data.count > 0) {
+        els.listenerIdleMsg.classList.add('hidden');
+        els.listenerCountMsg.classList.remove('hidden');
+        els.listenerCount.textContent = data.count.toLocaleString();
+      } else {
+        els.listenerIdleMsg.classList.remove('hidden');
+        els.listenerCountMsg.classList.add('hidden');
+      }
       if (!data.listening && listenerRunning) els.btnListenerStop.click();
     } catch { /* ignore */ }
   }, 500);
@@ -862,6 +916,114 @@ function startListenerPoll() {
 
 function stopListenerPoll() {
   if (listenerPollTimer) { clearInterval(listenerPollTimer); listenerPollTimer = null; }
+}
+
+// ─── iperf3: Output Append ────────────────────────────────────────────────────
+function appendIperfLines(lines) {
+  if (!lines.length) return;
+  const atBottom = els.iperfOutput.scrollHeight - els.iperfOutput.scrollTop
+                   - els.iperfOutput.clientHeight < 40;
+  const frag = document.createDocumentFragment();
+  for (const line of lines) {
+    const div = document.createElement('div');
+    div.className = 'log-line';
+    div.textContent = line;
+    frag.appendChild(div);
+  }
+  els.iperfOutput.appendChild(frag);
+  if (atBottom) els.iperfOutput.scrollTop = els.iperfOutput.scrollHeight;
+}
+
+// ─── iperf3: Start ────────────────────────────────────────────────────────────
+els.btnIperfStart.addEventListener('click', async () => {
+  const body = { mode: iperfMode };
+  if (iperfMode === 'client') {
+    const host = els.iperfHost.value.trim();
+    if (!host) { logTs('Target host is required for iperf3 client.', 'warn'); return; }
+    body.host      = host;
+    body.port      = parseInt(els.iperfClientPort.value) || 5201;
+    body.protocol  = iperfProto;
+    body.duration  = parseInt(els.iperfDuration.value) || 10;
+    body.bandwidth = els.iperfBandwidth.value.trim();
+    body.parallel  = parseInt(els.iperfParallel.value) || 1;
+    body.reverse   = iperfDir === 'reverse';
+  } else {
+    body.port    = parseInt(els.iperfServerPort.value) || 5201;
+    body.one_off = els.iperfOneOff.checked;
+  }
+
+  els.btnIperfStart.disabled = true;
+  try {
+    const res  = await fetch('/api/iperf3/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Start failed');
+    iperfRunning = true;
+    iperfSince   = 0;
+    els.btnIperfStart.classList.add('hidden');
+    els.btnIperfStop.classList.remove('hidden');
+    els.iperfLiveCounter.classList.remove('hidden');
+    els.btnIperfStart.disabled = false;
+    setIperfStatus('sending', 'RUNNING');
+    logTs(`iperf3: ${data.message}`, 'success');
+    startIperfPoll();
+  } catch (err) {
+    logTs(`iperf3 error: ${err.message}`, 'error');
+    els.btnIperfStart.disabled = false;
+  }
+});
+
+// ─── iperf3: Stop ─────────────────────────────────────────────────────────────
+els.btnIperfStop.addEventListener('click', async () => {
+  try {
+    const res  = await fetch('/api/iperf3/stop', { method: 'POST' });
+    const data = await res.json();
+    logTs(`iperf3 stopped. Lines collected: ${data.lines}`, 'warn');
+  } catch {
+    logTs('iperf3 stop request failed.', 'error');
+  }
+  _iperfStopped();
+});
+
+function _iperfStopped() {
+  stopIperfPoll();
+  iperfRunning = false;
+  els.btnIperfStop.classList.add('hidden');
+  els.btnIperfStart.classList.remove('hidden');
+  els.iperfLiveCounter.classList.add('hidden');
+  setIperfStatus('idle', 'IDLE');
+}
+
+// ─── iperf3: Clear Output ─────────────────────────────────────────────────────
+els.btnIperfClear.addEventListener('click', () => {
+  els.iperfOutput.innerHTML = '';
+  iperfSince = 0;
+});
+
+// ─── iperf3: Polling ──────────────────────────────────────────────────────────
+function startIperfPoll() {
+  iperfPollTimer = setInterval(async () => {
+    try {
+      const res  = await fetch(`/api/iperf3/output?since=${iperfSince}`);
+      const data = await res.json();
+      if (data.lines.length > 0) {
+        appendIperfLines(data.lines);
+        iperfSince = data.count;
+      }
+      els.iperfLineCount.textContent = data.count.toLocaleString();
+      if (!data.running && iperfRunning) {
+        logTs('iperf3 finished.', 'success');
+        _iperfStopped();
+      }
+    } catch { /* ignore transient poll errors */ }
+  }, 500);
+}
+
+function stopIperfPoll() {
+  if (iperfPollTimer) { clearInterval(iperfPollTimer); iperfPollTimer = null; }
 }
 
 // ─── Download PCAP ────────────────────────────────────────────────────────────

@@ -1,7 +1,9 @@
 import datetime
+import shutil
 import socket
 import subprocess
 import threading
+import time
 from collections import deque
 from scapy.all import (
     AsyncSniffer, Ether, Dot1Q, IP, UDP, TCP, ICMP, Raw,
@@ -32,6 +34,14 @@ _listener_thread: threading.Thread | None = None
 _listener_stop = threading.Event()
 _listener_count = 0   # TCP: connections accepted  |  UDP: datagrams received
 _listener_lock = threading.Lock()
+
+# ─── iperf3 state ─────────────────────────────────────────────────────────────
+
+_iperf3_proc: subprocess.Popen | None = None
+_iperf3_output: list[str] = []   # bounded at 500 lines, index-addressable
+_iperf3_lock = threading.Lock()
+_iperf3_running = False
+_iperf3_reader: threading.Thread | None = None
 
 
 _VIRT_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "dummy", "bond", "tun", "tap")
@@ -104,12 +114,28 @@ def _continuous_worker(cfg: dict, rate: float, iface: str):
     global _sent_count
     _sent_count = 0
     pkt = _build_packet(cfg)
-    interval = 1.0 / rate if rate > 0 else 0
+
+    if rate <= 0:
+        # Unlimited — blast in large batches to avoid per-call Python overhead
+        batch = 512
+        while not _stop_event.is_set():
+            sendp(pkt, iface=iface, count=batch, inter=0, verbose=False)
+            _sent_count += batch
+        return
+
+    # Rate-controlled: compute batch size for a 10 ms window (or longer for very
+    # low rates so we always send at least 1 packet per window).
+    window = max(0.01, 1.0 / rate)
+    batch = max(1, int(rate * window))
+
     while not _stop_event.is_set():
-        sendp(pkt, iface=iface, count=1, verbose=False)
-        _sent_count += 1
-        if interval > 0:
-            _stop_event.wait(interval)
+        t0 = time.monotonic()
+        sendp(pkt, iface=iface, count=batch, inter=0, verbose=False)
+        _sent_count += batch
+        elapsed = time.monotonic() - t0
+        remainder = window - elapsed
+        if remainder > 0.0001:
+            _stop_event.wait(remainder)
 
 
 def start_continuous(cfg: dict, rate: float, iface: str) -> tuple[bool, str]:
@@ -334,3 +360,111 @@ def is_listening() -> bool:
 def listener_count() -> int:
     with _listener_lock:
         return _listener_count
+
+
+# ─── iperf3 ───────────────────────────────────────────────────────────────────
+
+def _iperf3_reader_worker(proc: subprocess.Popen):
+    global _iperf3_running
+    try:
+        for line in proc.stdout:
+            stripped = line.rstrip('\n')
+            with _iperf3_lock:
+                _iperf3_output.append(stripped)
+                if len(_iperf3_output) > 500:
+                    _iperf3_output.pop(0)
+    finally:
+        proc.wait()
+        with _iperf3_lock:
+            _iperf3_running = False
+
+
+def start_iperf3(mode: str, **kwargs) -> tuple[bool, str]:
+    global _iperf3_proc, _iperf3_output, _iperf3_running, _iperf3_reader
+
+    with _iperf3_lock:
+        if _iperf3_running:
+            return False, "iperf3 already running"
+
+    if not shutil.which('iperf3'):
+        return False, "iperf3 not found in PATH"
+
+    cmd = ['iperf3']
+    if mode == 'server':
+        cmd += ['-s', '-p', str(kwargs.get('port', 5201))]
+        if kwargs.get('one_off'):
+            cmd.append('--one-off')
+    else:
+        host = str(kwargs.get('host', '')).strip()
+        if not host:
+            return False, "Target host is required for client mode"
+        cmd += ['-c', host, '-p', str(kwargs.get('port', 5201))]
+        if str(kwargs.get('protocol', 'tcp')).lower() == 'udp':
+            cmd.append('-u')
+        cmd += ['-t', str(int(kwargs.get('duration', 10)))]
+        bandwidth = str(kwargs.get('bandwidth', '')).strip()
+        if bandwidth:
+            cmd += ['-b', bandwidth]
+        parallel = int(kwargs.get('parallel', 1))
+        if parallel > 1:
+            cmd += ['-P', str(parallel)]
+        if kwargs.get('reverse'):
+            cmd.append('-R')
+
+    with _iperf3_lock:
+        _iperf3_output.clear()
+        _iperf3_running = True
+
+    try:
+        _iperf3_proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        with _iperf3_lock:
+            _iperf3_running = False
+        return False, "iperf3 binary not found"
+
+    _iperf3_reader = threading.Thread(
+        target=_iperf3_reader_worker, args=(_iperf3_proc,), daemon=True
+    )
+    _iperf3_reader.start()
+
+    mode_label = "server" if mode == "server" else f"client → {kwargs.get('host')}"
+    return True, f"iperf3 started ({mode_label})"
+
+
+def stop_iperf3() -> int:
+    global _iperf3_proc, _iperf3_running
+    with _iperf3_lock:
+        _iperf3_running = False
+    if _iperf3_proc is not None:
+        try:
+            _iperf3_proc.terminate()
+            _iperf3_proc.wait(timeout=3.0)
+        except Exception:
+            try:
+                _iperf3_proc.kill()
+            except Exception:
+                pass
+        _iperf3_proc = None
+    with _iperf3_lock:
+        return len(_iperf3_output)
+
+
+def get_iperf3_output(since: int = 0) -> list[str]:
+    with _iperf3_lock:
+        return _iperf3_output[since:]
+
+
+def is_iperf3_running() -> bool:
+    with _iperf3_lock:
+        return _iperf3_running
+
+
+def iperf3_line_count() -> int:
+    with _iperf3_lock:
+        return len(_iperf3_output)
