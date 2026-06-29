@@ -122,6 +122,20 @@ class ListenerStartRequest(BaseModel):
     bind_ip: str = "0.0.0.0"
 
 
+# ─── iperf3 models ────────────────────────────────────────────────────────────
+
+class Iperf3StartRequest(BaseModel):
+    mode: str = "client"       # "client" | "server"
+    host: str = ""
+    port: int = 5201
+    protocol: str = "tcp"      # "tcp" | "udp"
+    duration: int = 10
+    bandwidth: str = ""        # e.g. "100M", "" = unlimited
+    parallel: int = 1
+    reverse: bool = False
+    one_off: bool = False
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _ipcmd(*args: str) -> None:
@@ -338,4 +352,39 @@ async def listener_status():
     return {
         "listening": packet_gen.is_listening(),
         "count":     packet_gen.listener_count(),
+    }
+
+
+# ─── iperf3 endpoints ─────────────────────────────────────────────────────────
+
+@app.post("/api/iperf3/start")
+async def iperf3_start(req: Iperf3StartRequest):
+    ok, msg = packet_gen.start_iperf3(
+        mode=req.mode,
+        host=req.host,
+        port=req.port,
+        protocol=req.protocol,
+        duration=req.duration,
+        bandwidth=req.bandwidth,
+        parallel=req.parallel,
+        reverse=req.reverse,
+        one_off=req.one_off,
+    )
+    if not ok:
+        raise HTTPException(status_code=409, detail=msg)
+    return {"status": "ok", "message": msg}
+
+
+@app.post("/api/iperf3/stop")
+async def iperf3_stop():
+    count = packet_gen.stop_iperf3()
+    return {"status": "ok", "lines": count}
+
+
+@app.get("/api/iperf3/output")
+async def iperf3_output(since: int = 0):
+    return {
+        "lines":   packet_gen.get_iperf3_output(since),
+        "running": packet_gen.is_iperf3_running(),
+        "count":   packet_gen.iperf3_line_count(),
     }

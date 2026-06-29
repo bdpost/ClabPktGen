@@ -28,6 +28,7 @@
   --badge-log:  #1a1a2e;
   --badge-net:  #1a2a1a;
   --badge-rt:   #2a1a2a;
+  --badge-perf: #1a1a3a;
 
   --radius:  8px;
   --radius-sm: 5px;
@@ -199,6 +200,7 @@ main {
 .badge.log  { background: var(--badge-log);  color: var(--text-dim); }
 .badge.net  { background: var(--badge-net);  color: var(--green-hi); }
 .badge.rt   { background: var(--badge-rt);   color: #c084fc; }
+.badge.perf { background: var(--badge-perf); color: #a5b4fc; }
 
 /* ─── Interface pill ─── */
 .iface-pill {
