@@ -38,7 +38,7 @@ def _default_iface() -> str:
             return iface
     return ifaces[0] if ifaces else "eth1"
 
-app = FastAPI(title="PktGen")
+app = FastAPI(title="PktGen", version="0.0.16")
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static), name="static")
@@ -71,8 +71,22 @@ class SendRequest(PacketConfig):
     interface: str = Field(default_factory=_default_iface)
 
 
-class StreamRequest(PacketConfig):
-    rate: float = 2.0
+class StreamStartRequest(BaseModel):
+    # Shared base config (inherited by all streams)
+    src_mac:   str = "de:ad:be:ef:00:01"
+    dst_mac:   str = "ff:ff:ff:ff:ff:ff"
+    src_ip:    str = "192.168.1.100"
+    dst_ip:    str = "192.168.1.1"
+    vlan_id:   Optional[int] = None
+    vlan_pcp:  int = 0
+    payload:   str = "PktGen"
+    # Per-stream fields
+    protocol:  str = "udp"
+    src_port:  int = 12345
+    dst_port:  int = 8000
+    dscp:      int = 0
+    rate:      float = 10.0
+    pkt_size:  Optional[int] = None
     interface: str = Field(default_factory=_default_iface)
 
 
@@ -159,34 +173,45 @@ async def send(req: SendRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/start")
-async def start(req: StreamRequest):
-    cfg = _cfg(req)
+# ─── Multi-stream TX endpoints ───────────────────────────────────────────────
+
+@app.get("/api/streams")
+async def streams_list():
+    return {"streams": packet_gen.list_streams()}
+
+
+@app.post("/api/streams/start")
+async def streams_start(req: StreamStartRequest):
+    cfg = req.model_dump()
     iface = cfg.pop("interface")
-    rate = cfg.pop("rate")
+    rate  = cfg.pop("rate")
     try:
-        ok, msg = packet_gen.start_continuous(cfg, rate, iface)
-        if not ok:
-            raise HTTPException(status_code=409, detail=msg)
-        return {"status": "ok", "message": msg, "interface": iface, "rate": rate}
-    except HTTPException:
-        raise
+        stream_id, msg = packet_gen.start_stream(cfg, rate, iface)
+        return {"status": "ok", "stream_id": stream_id, "message": msg}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/stop")
-async def stop():
-    sent = packet_gen.stop_continuous()
-    return {"status": "ok", "sent": sent}
+@app.get("/api/streams/{stream_id}")
+async def streams_get(stream_id: str):
+    s = packet_gen.get_stream_status(stream_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"Stream {stream_id!r} not found")
+    return s
 
 
-@app.get("/api/status")
-async def status():
-    return {
-        "sending": packet_gen.is_sending(),
-        "sent": packet_gen.sent_count(),
-    }
+@app.post("/api/streams/{stream_id}/stop")
+async def streams_stop(stream_id: str):
+    found, sent = packet_gen.stop_stream(stream_id)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Stream {stream_id!r} not found")
+    return {"status": "ok", "stream_id": stream_id, "sent": sent}
+
+
+@app.delete("/api/streams")
+async def streams_stop_all():
+    results = packet_gen.stop_all_streams()
+    return {"status": "ok", "stopped": results}
 
 
 @app.get("/api/interfaces")

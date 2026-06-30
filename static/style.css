@@ -694,3 +694,93 @@ select {
 .dscp-af2 { color: var(--green-hi); }
 .dscp-af1 { color: #38bdf8; }
 .dscp-cs  { color: var(--text-dim); }
+
+/* ─── Stream Cards ─── */
+.stream-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  transition: border-color .15s;
+}
+.stream-card:last-child { margin-bottom: 0; }
+.stream-card:hover { border-color: var(--border2); }
+
+.stream-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.stream-proto-badge {
+  display: inline-block;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+.proto-badge-udp { background: rgba(56,189,248,.12); color: #38bdf8; border: 1px solid rgba(56,189,248,.3); }
+.proto-badge-tcp { background: rgba(63,185,80,.12);  color: var(--green-hi); border: 1px solid rgba(63,185,80,.3); }
+
+.stream-card-port {
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: .82rem;
+  font-weight: 700;
+  color: var(--text-hi);
+}
+
+.stream-card-dscp {
+  font-size: .72rem;
+  font-weight: 600;
+}
+
+.stream-card-rate {
+  font-size: .72rem;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.stream-card-stop {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: .8rem;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 3px;
+  transition: color .15s, background .15s;
+}
+.stream-card-stop:hover { color: var(--red); background: rgba(248,81,73,.1); }
+
+.stream-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: .72rem;
+  color: var(--text-dim);
+}
+
+.stream-card-sent {
+  color: var(--green-hi);
+  font-weight: 600;
+}
+
+.stream-card-id {
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: .65rem;
+  opacity: .4;
+  margin-left: auto;
+}
+
+#streamListEmpty {
+  padding: 18px 0;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: .8rem;
+}

@@ -1,10 +1,8 @@
 'use strict';
 
-// ─── TX State ─────────────────────────────────────────────────────────────────
-let mode     = 'fixed';
-let protocol = 'tcp';
-let sending  = false;
-let pollTimer = null;
+// ─── Multi-stream TX State ────────────────────────────────────────────────────
+let streamProto = 'udp';
+const _streamPolls = {};   // stream_id → intervalId
 
 // ─── RX State ─────────────────────────────────────────────────────────────────
 let rxProto     = 'all';
@@ -29,7 +27,7 @@ let iperfSince     = 0;
 const $ = id => document.getElementById(id);
 
 const els = {
-  // TX packet config
+  // Shared TX base config (left column)
   srcMac:           $('srcMac'),
   dstMac:           $('dstMac'),
   arpTarget:        $('arpTarget'),
@@ -40,28 +38,28 @@ const els = {
   vlanPcp:          $('vlanPcp'),
   srcIp:            $('srcIp'),
   dstIp:            $('dstIp'),
-  dscpValue:        $('dscpValue'),
-  dscpSelect:       $('dscpSelect'),
-  portFields:       $('portFields'),
-  srcPort:          $('srcPort'),
-  dstPort:          $('dstPort'),
-  iface:            $('iface'),
-  pktCount:         $('pktCount'),
-  pktRate:          $('pktRate'),
-  pktSize:          $('pktSize'),
-  pktSizePreset:    $('pktSizePreset'),
-  fixedFields:      $('fixedFields'),
-  continuousFields: $('continuousFields'),
-  payload:          $('payload'),
-  // TX actions
-  btnSend:          $('btnSend'),
-  btnStart:         $('btnStart'),
-  btnStop:          $('btnStop'),
-  // TX status
+  // Add Stream form
+  btnToggleAddStream: $('btnToggleAddStream'),
+  addStreamForm:      $('addStreamForm'),
+  streamSrcPort:      $('streamSrcPort'),
+  streamDstPort:      $('streamDstPort'),
+  streamDscpValue:    $('streamDscpValue'),
+  streamDscpSelect:   $('streamDscpSelect'),
+  streamRate:         $('streamRate'),
+  streamPktSize:      $('streamPktSize'),
+  streamPayload:      $('streamPayload'),
+  streamIface:        $('streamIface'),
+  streamPktCount:     $('streamPktCount'),
+  btnSendStream:      $('btnSendStream'),
+  btnAddStream:       $('btnAddStream'),
+  // Active streams
+  streamList:         $('streamList'),
+  streamListEmpty:    $('streamListEmpty'),
+  streamCount:        $('streamCount'),
+  btnStopAllStreams:  $('btnStopAllStreams'),
+  // TX status badge
   statusBadge:      $('statusBadge'),
   statusText:       $('statusText'),
-  liveCounter:      $('liveCounter'),
-  liveCount:        $('liveCount'),
   // Interface config
   ifaceConfigIface: $('ifaceConfigIface'),
   ifaceIp:          $('ifaceIp'),
@@ -192,21 +190,22 @@ function wireSegGroup(groupId, onChange) {
   });
 }
 
-// ─── Protocol toggle ──────────────────────────────────────────────────────────
-wireSegGroup('protoGroup', val => {
-  protocol = val;
-  els.portFields.style.display = val !== 'icmp' ? '' : 'none';
+// ─── Stream protocol toggle ───────────────────────────────────────────────────
+wireSegGroup('streamProtoGroup', val => { streamProto = val; });
+
+// ─── Stream DSCP quick-select ─────────────────────────────────────────────────
+els.streamDscpSelect.addEventListener('change', () => {
+  if (els.streamDscpSelect.value !== '') {
+    els.streamDscpValue.value = els.streamDscpSelect.value;
+    els.streamDscpSelect.value = '';
+  }
 });
 
-// ─── TX Mode toggle ───────────────────────────────────────────────────────────
-wireSegGroup('modeGroup', val => {
-  mode = val;
-  const fixed = val === 'fixed';
-  els.fixedFields.style.display = fixed ? '' : 'none';
-  els.continuousFields.classList.toggle('collapsed', fixed);
-  els.btnSend.classList.toggle('hidden', !fixed);
-  els.btnStart.classList.toggle('hidden', fixed);
-  els.btnStop.classList.add('hidden');
+// ─── Toggle Add Stream form ───────────────────────────────────────────────────
+els.btnToggleAddStream.addEventListener('click', () => {
+  const collapsed = els.addStreamForm.classList.contains('collapsed');
+  els.addStreamForm.classList.toggle('collapsed', !collapsed);
+  els.btnToggleAddStream.textContent = collapsed ? '– Hide' : '+ Add';
 });
 
 // ─── RX Protocol toggle ───────────────────────────────────────────────────────
@@ -236,25 +235,9 @@ els.vlanEnable.addEventListener('change', () => {
   els.vlanFields.classList.toggle('collapsed', !els.vlanEnable.checked);
 });
 
-// ─── DSCP quick-select ────────────────────────────────────────────────────────
-els.dscpSelect.addEventListener('change', () => {
-  if (els.dscpSelect.value !== '') {
-    els.dscpValue.value = els.dscpSelect.value;
-    els.dscpSelect.value = '';
-  }
-});
-
-// ─── Frame size preset ────────────────────────────────────────────────────────
-els.pktSizePreset.addEventListener('change', () => {
-  if (els.pktSizePreset.value !== '') {
-    els.pktSize.value = els.pktSizePreset.value;
-    els.pktSizePreset.value = '';
-  }
-});
-
 // ─── TX interface change → update src MAC ─────────────────────────────────────
-els.iface.addEventListener('change', () => {
-  const mac = _ifaceHwaddrs[els.iface.value];
+els.streamIface.addEventListener('change', () => {
+  const mac = _ifaceHwaddrs[els.streamIface.value];
   if (mac) els.srcMac.value = mac;
 });
 
@@ -306,7 +289,7 @@ els.btnArpResolve.addEventListener('click', async () => {
     const res = await fetch('/api/arp/resolve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip, interface: els.iface.value }),
+      body: JSON.stringify({ ip, interface: els.streamIface.value }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'ARP failed');
@@ -532,7 +515,6 @@ els.btnRxIfaceUp.addEventListener('click', async () => {
     if (!res.ok) throw new Error(data.detail || 'Configure failed');
     els.rxIfacePill.textContent = body.ip;
     els.rxIfacePill.classList.remove('hidden');
-    // Auto-fill the listener bind IP with just the host part
     els.listenerBindIp.value = body.ip.split('/')[0].trim();
     logTs(`RX interface ${data.interface} configured — ${data.ip}`, 'success');
   } catch (err) {
@@ -579,7 +561,7 @@ async function loadInterfaces() {
       ? 'eth1'
       : interfaces.find(i => i !== mgmt) || interfaces[0] || 'eth1';
 
-    [els.iface, els.ifaceConfigIface, els.routeIface, els.rxIface, els.rxIfaceSelect, els.rxRouteIface].forEach(sel => {
+    [els.streamIface, els.ifaceConfigIface, els.routeIface, els.rxIface, els.rxIfaceSelect, els.rxRouteIface].forEach(sel => {
       sel.innerHTML = '';
       interfaces.forEach(iface => {
         const opt = document.createElement('option');
@@ -601,8 +583,8 @@ async function loadInterfaces() {
       els.iperfIface.appendChild(opt);
     });
 
-    // Pre-populate src MAC with the actual TX interface MAC
-    const txMac = _ifaceHwaddrs[els.iface.value];
+    // Pre-populate src MAC with the TX interface MAC
+    const txMac = _ifaceHwaddrs[els.streamIface.value];
     if (txMac) els.srcMac.value = txMac;
 
     // Pre-populate IP field with the existing address on the config interface (if any)
@@ -617,114 +599,216 @@ async function loadInterfaces() {
   }
 }
 
-// ─── Build TX packet config ───────────────────────────────────────────────────
-function buildConfig() {
+// ─── Build shared base config (MACs, IPs, VLAN) ──────────────────────────────
+function buildBaseConfig() {
   const cfg = {
-    src_mac:   els.srcMac.value.trim(),
-    dst_mac:   els.dstMac.value.trim(),
-    src_ip:    els.srcIp.value.trim(),
-    dst_ip:    els.dstIp.value.trim(),
-    dscp:      parseInt(els.dscpValue.value) || 0,
-    protocol,
-    payload:   els.payload.value || 'PktGen',
-    interface: els.iface.value,
+    src_mac: els.srcMac.value.trim(),
+    dst_mac: els.dstMac.value.trim(),
+    src_ip:  els.srcIp.value.trim(),
+    dst_ip:  els.dstIp.value.trim(),
   };
-  if (protocol !== 'icmp') {
-    cfg.src_port = parseInt(els.srcPort.value) || 12345;
-    cfg.dst_port = parseInt(els.dstPort.value) || 80;
-  }
   if (els.vlanEnable.checked) {
     cfg.vlan_id  = parseInt(els.vlanId.value)  || 100;
     cfg.vlan_pcp = parseInt(els.vlanPcp.value) || 0;
   }
-  const pktSize = parseInt(els.pktSize.value) || 0;
+  return cfg;
+}
+
+// ─── Build full stream payload (base + per-stream fields) ─────────────────────
+function buildStreamPayload() {
+  const cfg = buildBaseConfig();
+  cfg.protocol  = streamProto;
+  cfg.src_port  = parseInt(els.streamSrcPort.value)   || 12345;
+  cfg.dst_port  = parseInt(els.streamDstPort.value)   || 8000;
+  cfg.dscp      = parseInt(els.streamDscpValue.value) || 0;
+  cfg.rate      = parseFloat(els.streamRate.value)    || 10;
+  cfg.payload   = els.streamPayload.value || 'PktGen';
+  cfg.interface = els.streamIface.value;
+  const pktSize = parseInt(els.streamPktSize.value) || 0;
   if (pktSize > 0) cfg.pkt_size = pktSize;
   return cfg;
 }
 
-// ─── TX: Send Fixed ───────────────────────────────────────────────────────────
-els.btnSend.addEventListener('click', async () => {
-  const cfg = buildConfig();
-  cfg.count = parseInt(els.pktCount.value) || 1;
-  els.btnSend.disabled = true;
+// ─── TX: Send N Packets (quick burst) ────────────────────────────────────────
+els.btnSendStream.addEventListener('click', async () => {
+  const cfg   = buildStreamPayload();
+  const rate  = cfg.rate;
+  const iface = cfg.interface;
+  // /api/send expects a flat PacketConfig + count + interface
+  const body = { ...cfg, count: parseInt(els.streamPktCount.value) || 1 };
+  // Remove stream-only fields not in PacketConfig
+  delete body.rate;
+
+  els.btnSendStream.disabled = true;
   setStatus('sending', 'SENDING');
   try {
     const res = await fetch('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cfg),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Send failed');
-    logTs(`Sent ${data.sent} packet(s) on ${data.interface}`, 'success');
+    logTs(`Sent ${data.sent} packet(s) on ${data.interface} — ${streamProto.toUpperCase()} dst:${body.dst_port} DSCP=${body.dscp}`, 'success');
     setStatus('idle', 'IDLE');
   } catch (err) {
-    logTs(`Error: ${err.message}`, 'error');
-    setStatus('error', 'ERROR');
-    setTimeout(() => setStatus('idle', 'IDLE'), 3000);
+    logTs(`Send error: ${err.message}`, 'error');
+    setStatus('idle', 'IDLE');
   } finally {
-    els.btnSend.disabled = false;
+    els.btnSendStream.disabled = false;
   }
 });
 
-// ─── TX: Start Stream ─────────────────────────────────────────────────────────
-els.btnStart.addEventListener('click', async () => {
-  const cfg = buildConfig();
-  cfg.rate = parseFloat(els.pktRate.value) || 10;
+// ─── TX: Start a new stream ───────────────────────────────────────────────────
+els.btnAddStream.addEventListener('click', async () => {
+  const cfg = buildStreamPayload();
+
+  els.btnAddStream.disabled = true;
   try {
-    const res = await fetch('/api/start', {
+    const res  = await fetch('/api/streams/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Start failed');
-    sending = true;
-    els.btnStart.classList.add('hidden');
-    els.btnStop.classList.remove('hidden');
-    els.liveCounter.classList.remove('hidden');
-    setStatus('sending', 'STREAMING');
-    logTs(`Stream started on ${data.interface} @ ${data.rate} pps`, 'success');
-    startPoll();
+
+    logTs(
+      `Stream ${data.stream_id} started — ${streamProto.toUpperCase()} ` +
+      `dst:${cfg.dst_port} DSCP=${cfg.dscp} @ ${cfg.rate} pps`,
+      'success'
+    );
+
+    // Collapse the form
+    els.addStreamForm.classList.add('collapsed');
+    els.btnToggleAddStream.textContent = '+ Add';
+
+    _beginStreamPoll(data.stream_id, cfg);
+    _updateStreamBadge();
   } catch (err) {
-    logTs(`Error: ${err.message}`, 'error');
+    logTs(`Stream start error: ${err.message}`, 'error');
+  } finally {
+    els.btnAddStream.disabled = false;
   }
 });
 
-// ─── TX: Stop Stream ──────────────────────────────────────────────────────────
-els.btnStop.addEventListener('click', async () => {
+// ─── TX: Stop All ─────────────────────────────────────────────────────────────
+els.btnStopAllStreams.addEventListener('click', async () => {
   try {
-    const res = await fetch('/api/stop', { method: 'POST' });
-    const data = await res.json();
-    logTs(`Stream stopped. Total sent: ${data.sent}`, 'warn');
-  } catch {
-    logTs('Stop request failed.', 'error');
+    await fetch('/api/streams', { method: 'DELETE' });
+    logTs('All streams stopped.', 'warn');
+  } catch (err) {
+    logTs(`Stop all error: ${err.message}`, 'error');
   }
-  stopPoll();
-  sending = false;
-  els.btnStop.classList.add('hidden');
-  els.btnStart.classList.remove('hidden');
-  els.liveCounter.classList.add('hidden');
-  setStatus('idle', 'IDLE');
+  Object.keys(_streamPolls).forEach(sid => _removeStreamCard(sid));
 });
 
-// ─── TX: Live Poll ────────────────────────────────────────────────────────────
-function startPoll() {
-  pollTimer = setInterval(async () => {
+// ─── TX: Per-stream polling ───────────────────────────────────────────────────
+function _beginStreamPoll(streamId, cfg) {
+  _upsertStreamCard(streamId, {
+    running:  true,
+    sent:     0,
+    rate:     cfg.rate,
+    protocol: cfg.protocol,
+    dst_port: cfg.dst_port,
+    dscp:     cfg.dscp,
+  });
+
+  const intervalId = setInterval(async () => {
     try {
-      const res  = await fetch('/api/status');
+      const res = await fetch(`/api/streams/${streamId}`);
+      if (res.status === 404) { _removeStreamCard(streamId); return; }
       const data = await res.json();
-      els.liveCount.textContent = data.sent.toLocaleString();
-      if (!data.sending && sending) els.btnStop.click();
-    } catch { /* ignore */ }
+      _upsertStreamCard(streamId, data);
+      if (!data.running) _removeStreamCard(streamId);
+    } catch { /* ignore transient errors */ }
   }, 500);
+
+  _streamPolls[streamId] = intervalId;
 }
 
-function stopPoll() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+function _stopStreamPoll(streamId) {
+  if (_streamPolls[streamId]) {
+    clearInterval(_streamPolls[streamId]);
+    delete _streamPolls[streamId];
+  }
 }
 
-// ─── RX: Capture Table Helpers ────────────────────────────────────────────────
+// ─── TX: Render / update a stream card ───────────────────────────────────────
+function _upsertStreamCard(streamId, data) {
+  let card = $(`stream-card-${streamId}`);
+  if (!card) {
+    card = document.createElement('div');
+    card.id        = `stream-card-${streamId}`;
+    card.className = 'stream-card';
+    els.streamListEmpty.classList.add('hidden');
+    els.streamList.appendChild(card);
+  }
+
+  const proto    = (data.protocol || 'udp').toUpperCase();
+  const dscp     = data.dscp ?? 0;
+  const dscpLbl  = dscpLabel(dscp);
+  const dscpCls  = dscpClass(dscp);
+  const sent     = (data.sent ?? 0).toLocaleString();
+  const rate     = data.rate != null ? `${data.rate} pps` : '?';
+  const dstPort  = data.dst_port ?? '?';
+  const pBadge   = proto === 'UDP' ? 'proto-badge-udp' : 'proto-badge-tcp';
+
+  card.innerHTML =
+    `<div class="stream-card-header">` +
+      `<span class="stream-proto-badge ${pBadge}">${proto}</span>` +
+      `<span class="stream-card-port">:${dstPort}</span>` +
+      `<span class="stream-card-dscp ${dscpCls}">${dscpLbl}</span>` +
+      `<span class="stream-card-rate">${rate}</span>` +
+      `<button class="stream-card-stop" data-id="${streamId}" title="Stop stream">✕</button>` +
+    `</div>` +
+    `<div class="stream-card-stats">` +
+      `<span class="pulse-dot"></span>` +
+      `<span class="stream-card-sent">${sent} pkts</span>` +
+      `<span class="stream-card-id">${streamId}</span>` +
+    `</div>`;
+
+  card.querySelector('.stream-card-stop').addEventListener('click', () => stopStream(streamId));
+}
+
+// ─── TX: Stop a single stream ─────────────────────────────────────────────────
+async function stopStream(streamId) {
+  try {
+    const res  = await fetch(`/api/streams/${streamId}/stop`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok && res.status !== 404) throw new Error(data.detail || 'Stop failed');
+    logTs(`Stream ${streamId} stopped. Sent: ${data.sent ?? '?'}`, 'warn');
+  } catch (err) {
+    logTs(`Stop stream ${streamId}: ${err.message}`, 'error');
+  }
+  _removeStreamCard(streamId);
+}
+
+function _removeStreamCard(streamId) {
+  _stopStreamPoll(streamId);
+  const card = $(`stream-card-${streamId}`);
+  if (card) card.remove();
+  if (!els.streamList.querySelector('.stream-card')) {
+    els.streamListEmpty.classList.remove('hidden');
+  }
+  _updateStreamBadge();
+}
+
+function _updateStreamBadge() {
+  const count = Object.keys(_streamPolls).length;
+  if (count > 0) {
+    setStatus('sending', `${count} STREAM${count > 1 ? 'S' : ''}`);
+    els.streamCount.textContent = count;
+    els.streamCount.classList.remove('hidden');
+    els.btnStopAllStreams.classList.toggle('hidden', count < 2);
+  } else {
+    setStatus('idle', 'IDLE');
+    els.streamCount.classList.add('hidden');
+    els.btnStopAllStreams.classList.add('hidden');
+  }
+}
+
+// ─── DSCP helpers (shared by TX cards and RX capture table) ──────────────────
 const DSCP_NAMES = {
   0: 'BE', 8: 'CS1', 10: 'AF11', 12: 'AF12', 14: 'AF13',
   16: 'CS2', 18: 'AF21', 20: 'AF22', 22: 'AF23',
@@ -750,6 +834,7 @@ function fmtEndpoint(ip, port) {
   return port != null ? `${ip}:${port}` : ip;
 }
 
+// ─── RX: Capture Table ────────────────────────────────────────────────────────
 function appendCaptureRows(packets) {
   const wrap = els.captureWrap;
   const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 40;

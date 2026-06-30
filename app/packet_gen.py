@@ -1,23 +1,36 @@
+import dataclasses
 import datetime
 import shutil
 import socket
 import subprocess
 import threading
 import time
+import uuid
 from collections import deque
 from scapy.all import (
     AsyncSniffer, Ether, Dot1Q, IP, UDP, TCP, ICMP, Raw,
     get_if_list, get_if_hwaddr,
 )
 
-# ─── TX state ─────────────────────────────────────────────────────────────────
+# ─── Multi-stream TX state ────────────────────────────────────────────────────
 
-_send_thread: threading.Thread | None = None
-_stop_event = threading.Event()
-_sent_count = 0
-_tx_timer: threading.Timer | None = None
+_AUTO_STOP_SECS = 900  # 15 minutes per stream
 
-_AUTO_STOP_SECS = 300  # 5 minutes
+
+@dataclasses.dataclass
+class StreamState:
+    stream_id:  str
+    cfg:        dict
+    rate:       float
+    iface:      str
+    stop_event: threading.Event
+    thread:     threading.Thread
+    timer:      threading.Timer | None
+    sent:       int  # written only by owning thread; GIL-safe int read from any thread
+
+
+_streams: dict[str, StreamState] = {}
+_streams_lock = threading.Lock()
 
 # ─── Passive capture state ────────────────────────────────────────────────────
 
@@ -126,72 +139,115 @@ def send_fixed(cfg: dict, count: int, iface: str) -> int:
     return count
 
 
-def _continuous_worker(cfg: dict, rate: float, iface: str):
-    global _sent_count
-    _sent_count = 0
-    raw = bytes(_build_packet(cfg))
-    sock = _open_raw_socket(iface)
+def _stream_worker(state: StreamState) -> None:
+    raw  = bytes(_build_packet(state.cfg))
+    sock = _open_raw_socket(state.iface)
     send = sock.send
+    rate = state.rate
+    stop = state.stop_event
 
     try:
         if rate <= 0:
-            # Unlimited — tight loop, no per-packet Scapy/Python overhead
-            while not _stop_event.is_set():
+            while not stop.is_set():
                 for _ in range(2000):
                     send(raw)
-                _sent_count += 2000
+                state.sent += 2000
             return
 
-        # Rate-controlled: compute batch size for a 10 ms window (or longer for
-        # very low rates so we always send at least 1 packet per window).
         window = max(0.01, 1.0 / rate)
-        batch = max(1, int(rate * window))
+        batch  = max(1, int(rate * window))
 
-        while not _stop_event.is_set():
+        while not stop.is_set():
             t0 = time.monotonic()
             for _ in range(batch):
                 send(raw)
-            _sent_count += batch
-            elapsed = time.monotonic() - t0
+            state.sent += batch
+            elapsed   = time.monotonic() - t0
             remainder = window - elapsed
             if remainder > 0.0001:
-                _stop_event.wait(remainder)
+                stop.wait(remainder)
     finally:
         sock.close()
 
 
-def start_continuous(cfg: dict, rate: float, iface: str) -> tuple[bool, str]:
-    global _send_thread, _tx_timer
-    if _send_thread and _send_thread.is_alive():
-        return False, "Already sending"
-    _stop_event.clear()
-    _send_thread = threading.Thread(
-        target=_continuous_worker, args=(cfg, rate, iface), daemon=True
+def _auto_stop_stream(stream_id: str) -> None:
+    stop_stream(stream_id)
+
+
+def start_stream(cfg: dict, rate: float, iface: str) -> tuple[str, str]:
+    stream_id  = uuid.uuid4().hex[:8]
+    stop_event = threading.Event()
+    state = StreamState(
+        stream_id=stream_id, cfg=cfg, rate=rate, iface=iface,
+        stop_event=stop_event, thread=None, timer=None, sent=0,  # type: ignore[arg-type]
     )
-    _send_thread.start()
-    _tx_timer = threading.Timer(_AUTO_STOP_SECS, stop_continuous)
-    _tx_timer.daemon = True
-    _tx_timer.start()
-    return True, "Stream started"
+    thread = threading.Thread(
+        target=_stream_worker, args=(state,), daemon=True, name=f"tx-{stream_id}"
+    )
+    state.thread = thread
+    timer = threading.Timer(_AUTO_STOP_SECS, _auto_stop_stream, args=(stream_id,))
+    timer.daemon = True
+    state.timer = timer
+
+    with _streams_lock:
+        _streams[stream_id] = state
+
+    thread.start()
+    timer.start()
+    return stream_id, "Stream started"
 
 
-def stop_continuous() -> int:
-    global _sent_count, _tx_timer
-    if _tx_timer:
-        _tx_timer.cancel()
-        _tx_timer = None
-    _stop_event.set()
-    if _send_thread:
-        _send_thread.join(timeout=3.0)
-    return _sent_count
+def stop_stream(stream_id: str) -> tuple[bool, int]:
+    with _streams_lock:
+        state = _streams.pop(stream_id, None)
+    if state is None:
+        return False, 0
+    if state.timer:
+        state.timer.cancel()
+    state.stop_event.set()
+    state.thread.join(timeout=3.0)
+    return True, state.sent
 
 
-def is_sending() -> bool:
-    return _send_thread is not None and _send_thread.is_alive()
+def stop_all_streams() -> dict[str, int]:
+    with _streams_lock:
+        ids = list(_streams.keys())
+    results = {}
+    for sid in ids:
+        found, sent = stop_stream(sid)
+        if found:
+            results[sid] = sent
+    return results
 
 
-def sent_count() -> int:
-    return _sent_count
+def get_stream_status(stream_id: str) -> dict | None:
+    with _streams_lock:
+        state = _streams.get(stream_id)
+    if state is None:
+        return None
+    return {
+        "stream_id": state.stream_id,
+        "running":   state.thread.is_alive(),
+        "sent":      state.sent,
+        "rate":      state.rate,
+        "iface":     state.iface,
+        "protocol":  state.cfg.get("protocol", "udp"),
+        "src_port":  state.cfg.get("src_port"),
+        "dst_port":  state.cfg.get("dst_port"),
+        "dscp":      state.cfg.get("dscp", 0),
+        "pkt_size":  state.cfg.get("pkt_size"),
+    }
+
+
+def list_streams() -> list[dict]:
+    with _streams_lock:
+        ids = list(_streams.keys())
+    return [s for sid in ids if (s := get_stream_status(sid)) is not None]
+
+
+def any_sending() -> bool:
+    with _streams_lock:
+        return bool(_streams)
 
 
 # ─── Passive Capture ──────────────────────────────────────────────────────────

@@ -161,36 +161,6 @@
             <label for="dstIp">Destination IP</label>
             <input id="dstIp" type="text" value="192.168.1.1" spellcheck="false">
           </div>
-          <div class="field">
-            <label for="dscpValue">DSCP <span class="hint">0–63</span></label>
-            <div class="dscp-row">
-              <input id="dscpValue" type="number" value="0" min="0" max="63">
-              <select id="dscpSelect">
-                <option value="">— Quick select —</option>
-                <option value="0">CS0 — Best Effort (0)</option>
-                <option value="8">CS1 (8)</option>
-                <option value="10">AF11 (10)</option>
-                <option value="12">AF12 (12)</option>
-                <option value="14">AF13 (14)</option>
-                <option value="16">CS2 (16)</option>
-                <option value="18">AF21 (18)</option>
-                <option value="20">AF22 (20)</option>
-                <option value="22">AF23 (22)</option>
-                <option value="24">CS3 (24)</option>
-                <option value="26">AF31 (26)</option>
-                <option value="28">AF32 (28)</option>
-                <option value="30">AF33 (30)</option>
-                <option value="32">CS4 (32)</option>
-                <option value="34">AF41 (34)</option>
-                <option value="36">AF42 (36)</option>
-                <option value="38">AF43 (38)</option>
-                <option value="40">CS5 (40)</option>
-                <option value="46">EF — Expedited Forwarding (46)</option>
-                <option value="48">CS6 (48)</option>
-                <option value="56">CS7 (56)</option>
-              </select>
-            </div>
-          </div>
         </section>
 
       </div><!-- /col -->
@@ -198,90 +168,115 @@
       <!-- ─── RIGHT COLUMN ─── -->
       <div class="col">
 
-        <!-- Layer 4 -->
+        <!-- Add Stream -->
         <section class="card">
-          <h2><span class="badge l4">L4</span>Transport</h2>
-          <div class="field">
-            <label>Protocol</label>
-            <div class="seg-group" id="protoGroup">
-              <button class="seg" data-value="udp">UDP</button>
-              <button class="seg active" data-value="tcp">TCP</button>
-              <button class="seg" data-value="icmp">ICMP</button>
-            </div>
-          </div>
-          <div id="portFields" class="field-row">
-            <div class="field">
-              <label for="srcPort">Source Port</label>
-              <input id="srcPort" type="number" value="12345" min="1" max="65535">
-            </div>
-            <div class="field">
-              <label for="dstPort">Destination Port</label>
-              <input id="dstPort" type="number" value="80" min="1" max="65535">
-            </div>
-          </div>
-        </section>
+          <h2>
+            <span class="badge l4">TX</span>Add Stream
+            <button id="btnToggleAddStream" class="btn-link" style="margin-left:auto;font-size:.8rem">+ Add</button>
+          </h2>
 
-        <!-- Transmission -->
-        <section class="card">
-          <h2><span class="badge tx">TX</span>Transmission</h2>
-          <div class="field">
-            <label for="iface">Interface</label>
-            <select id="iface">
-              <option value="eth1">eth1</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Mode</label>
-            <div class="seg-group" id="modeGroup">
-              <button class="seg active" data-value="fixed">Fixed Count</button>
-              <button class="seg" data-value="continuous">Continuous</button>
-            </div>
-          </div>
-          <div id="fixedFields">
+          <div id="addStreamForm" class="collapsible collapsed">
+
             <div class="field">
-              <label for="pktCount">Packet Count</label>
-              <input id="pktCount" type="number" value="1" min="1" max="10000000">
+              <label>Protocol</label>
+              <div class="seg-group" id="streamProtoGroup">
+                <button class="seg active" data-value="udp">UDP</button>
+                <button class="seg" data-value="tcp">TCP</button>
+              </div>
             </div>
-          </div>
-          <div id="continuousFields" class="collapsible collapsed">
+
+            <div class="field-row">
+              <div class="field">
+                <label for="streamSrcPort">Source Port</label>
+                <input id="streamSrcPort" type="number" value="12345" min="1" max="65535">
+              </div>
+              <div class="field">
+                <label for="streamDstPort">Destination Port</label>
+                <input id="streamDstPort" type="number" value="8000" min="1" max="65535">
+              </div>
+            </div>
+
             <div class="field">
-              <label for="pktRate">Rate <span class="hint">pps</span></label>
-              <input id="pktRate" type="number" value="2" min="1" max="1000000">
+              <label for="streamDscpValue">DSCP <span class="hint">0–63</span></label>
+              <div class="dscp-row">
+                <input id="streamDscpValue" type="number" value="0" min="0" max="63">
+                <select id="streamDscpSelect">
+                  <option value="">— Quick select —</option>
+                  <option value="0">CS0 — Best Effort (0)</option>
+                  <option value="8">CS1 (8)</option>
+                  <option value="10">AF11 (10)</option>
+                  <option value="12">AF12 (12)</option>
+                  <option value="14">AF13 (14)</option>
+                  <option value="16">CS2 (16)</option>
+                  <option value="18">AF21 (18)</option>
+                  <option value="20">AF22 (20)</option>
+                  <option value="22">AF23 (22)</option>
+                  <option value="24">CS3 (24)</option>
+                  <option value="26">AF31 (26)</option>
+                  <option value="28">AF32 (28)</option>
+                  <option value="30">AF33 (30)</option>
+                  <option value="32">CS4 (32)</option>
+                  <option value="34">AF41 (34)</option>
+                  <option value="36">AF42 (36)</option>
+                  <option value="38">AF43 (38)</option>
+                  <option value="40">CS5 (40)</option>
+                  <option value="46">EF — Expedited Forwarding (46)</option>
+                  <option value="48">CS6 (48)</option>
+                  <option value="56">CS7 (56)</option>
+                </select>
+              </div>
             </div>
-          </div>
-          <div class="field">
-            <label for="pktSize">Frame Size <span class="hint">bytes · 0 = natural</span></label>
-            <div class="dscp-row">
-              <input id="pktSize" type="number" value="0" min="0" max="9000">
-              <select id="pktSizePreset">
-                <option value="">— Preset —</option>
-                <option value="64">64 — min Ethernet</option>
-                <option value="128">128</option>
-                <option value="256">256</option>
-                <option value="512">512</option>
-                <option value="1024">1024</option>
-                <option value="1280">1280</option>
-                <option value="1500">1500 — max std</option>
-                <option value="9000">9000 — jumbo</option>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="streamRate">Rate <span class="hint">pps · 0 = unlimited</span></label>
+                <input id="streamRate" type="number" value="10" min="0" max="1000000">
+              </div>
+              <div class="field">
+                <label for="streamPktSize">Frame Size <span class="hint">bytes · 0 = natural</span></label>
+                <input id="streamPktSize" type="number" value="0" min="0" max="9000">
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="streamPayload">ASCII Payload</label>
+              <input id="streamPayload" type="text" value="PktGen" spellcheck="false">
+            </div>
+
+            <div class="field">
+              <label for="streamIface">Interface</label>
+              <select id="streamIface">
+                <option value="eth1">eth1</option>
               </select>
             </div>
-          </div>
+
+            <div class="field">
+              <label for="streamPktCount">Packet Count <span class="hint">for quick burst</span></label>
+              <input id="streamPktCount" type="number" value="1" min="1" max="10000000">
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button id="btnSendStream" class="btn btn-secondary" style="flex:1">Send N Packets</button>
+              <button id="btnAddStream" class="btn btn-success" style="flex:1">Start Stream</button>
+            </div>
+
+          </div><!-- /addStreamForm -->
         </section>
 
-        <!-- Payload -->
+        <!-- Active Streams -->
         <section class="card">
-          <h2><span class="badge pay">PAY</span>Payload</h2>
-          <div class="field">
-            <label for="payload">ASCII Payload</label>
-            <input id="payload" type="text" value="PktGen" spellcheck="false">
-          </div>
-        </section>
+          <h2>
+            <span class="badge tx">TX</span>Active Streams
+            <span id="streamCount" class="iface-pill hidden" style="margin-left:auto">0</span>
+          </h2>
 
-        <!-- Actions -->
-        <section class="card actions-card">
-          <button id="btnSend" class="btn btn-primary">Send Packet(s)</button>
-          <button id="btnStart" class="btn btn-success hidden">Start Stream</button>
-          <button id="btnStop" class="btn btn-danger hidden">Stop Stream</button>
+          <div id="streamList">
+            <div id="streamListEmpty">No streams running — use Add Stream above.</div>
+          </div>
+
+          <button id="btnStopAllStreams" class="btn btn-danger hidden" style="margin-top:12px;width:100%">
+            Stop All Streams
+          </button>
         </section>
 
       </div><!-- /col -->
