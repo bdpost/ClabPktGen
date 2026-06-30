@@ -338,8 +338,8 @@ main {
 /* ─── Collapsible ─── */
 .collapsible {
   overflow: hidden;
-  max-height: 200px;
-  transition: max-height .25s ease, opacity .25s;
+  max-height: 1000px;
+  transition: max-height .35s ease, opacity .25s;
   opacity: 1;
 }
 .collapsible.collapsed { max-height: 0; opacity: 0; pointer-events: none; }
@@ -672,6 +672,7 @@ select {
 }
 
 /* column widths */
+.col-stream { width: 64px; font-family: 'JetBrains Mono','Cascadia Code','Fira Code','Consolas',monospace; font-size: .65rem; color: var(--text-dim); }
 .col-id    { width: 52px; color: var(--text-dim); }
 .col-time  { width: 120px; color: var(--text-dim); }
 .col-proto { width: 60px; font-weight: 700; text-align: center; }
@@ -778,7 +779,8 @@ select {
   margin-left: auto;
 }
 
-#streamListEmpty {
+#streamListEmpty,
+#rxCaptureListEmpty {
   padding: 18px 0;
   text-align: center;
   color: var(--text-dim);

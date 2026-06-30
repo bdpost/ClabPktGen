@@ -4,11 +4,9 @@
 let streamProto = 'udp';
 const _streamPolls = {};   // stream_id → intervalId
 
-// ─── RX State ─────────────────────────────────────────────────────────────────
-let rxProto     = 'all';
-let rxLastId    = 0;
-let rxPollTimer = null;
-let rxReceiving = false;
+// ─── Multi-stream RX State ────────────────────────────────────────────────────
+let rxProto = 'all';
+const _rxPolls = {};   // rx_id → { intervalId, since }
 
 // ─── Listener State ───────────────────────────────────────────────────────────
 let listenerProto     = 'tcp';
@@ -105,9 +103,10 @@ const els = {
   rxIface:            $('rxIface'),
   rxPort:             $('rxPort'),
   btnRxStart:         $('btnRxStart'),
-  btnRxStop:          $('btnRxStop'),
-  rxLiveCounter:      $('rxLiveCounter'),
-  rxLiveCount:        $('rxLiveCount'),
+  rxCaptureList:      $('rxCaptureList'),
+  rxCaptureListEmpty: $('rxCaptureListEmpty'),
+  rxCaptureCount:     $('rxCaptureCount'),
+  btnStopAllRx:       $('btnStopAllRx'),
   // RX header badge
   rxStatusBadge:      $('rxStatusBadge'),
   rxStatusText:       $('rxStatusText'),
@@ -115,7 +114,6 @@ const els = {
   captureWrap:        $('captureWrap'),
   captureBody:        $('captureBody'),
   btnRxClear:         $('btnRxClear'),
-  btnDownloadPcap:    $('btnDownloadPcap'),
   // iperf3
   iperfIface:         $('iperfIface'),
   iperfHost:          $('iperfHost'),
@@ -847,6 +845,7 @@ function appendCaptureRows(packets) {
     const tr = document.createElement('tr');
     const protoClass = `proto-${p.protocol.toLowerCase()}`;
     tr.innerHTML =
+      `<td class="col-stream">${p.rx_id ? p.rx_id.slice(0, 6) : '—'}</td>` +
       `<td class="col-id">${p.id}</td>` +
       `<td class="col-time">${p.time}</td>` +
       `<td class="col-proto ${protoClass}">${p.protocol}</td>` +
@@ -869,8 +868,9 @@ els.btnRxStart.addEventListener('click', async () => {
     protocol:  rxProto,
     port:      els.rxPort.value ? parseInt(els.rxPort.value) : null,
   };
+  els.btnRxStart.disabled = true;
   try {
-    const res = await fetch('/api/rx/start', {
+    const res = await fetch('/api/rx/streams/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
@@ -878,70 +878,140 @@ els.btnRxStart.addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Start failed');
 
-    rxReceiving = true;
-    rxLastId    = 0;
-    els.btnRxStart.classList.add('hidden');
-    els.btnRxStop.classList.remove('hidden');
-    els.rxLiveCounter.classList.remove('hidden');
-    setRxStatus('receiving', 'LISTEN');
     const portStr = req.port ? `:${req.port}` : '';
-    logTs(`RX started on ${data.interface} — filter: ${rxProto}${portStr}`, 'success');
-    startRxPoll();
+    logTs(`Capture ${data.rx_id} started on ${data.interface} — ${rxProto}${portStr}`, 'success');
+    _beginRxPoll(data.rx_id, { iface: data.interface, protocol: rxProto, port: req.port });
+    _updateRxBadge();
   } catch (err) {
     logTs(`RX error: ${err.message}`, 'error');
+  } finally {
+    els.btnRxStart.disabled = false;
   }
 });
 
-// ─── RX: Stop Capture ─────────────────────────────────────────────────────────
-els.btnRxStop.addEventListener('click', async () => {
+// ─── RX: Stop All ─────────────────────────────────────────────────────────────
+els.btnStopAllRx.addEventListener('click', async () => {
   try {
-    const res  = await fetch('/api/rx/stop', { method: 'POST' });
-    const data = await res.json();
-    logTs(`RX stopped. Total captured: ${data.count}`, 'warn');
-  } catch {
-    logTs('RX stop request failed.', 'error');
-  }
-  stopRxPoll();
-  rxReceiving = false;
-  els.btnRxStop.classList.add('hidden');
-  els.btnRxStart.classList.remove('hidden');
-  els.rxLiveCounter.classList.add('hidden');
-  setRxStatus('idle', 'IDLE');
-});
-
-// ─── RX: Clear Buffer ─────────────────────────────────────────────────────────
-els.btnRxClear.addEventListener('click', async () => {
-  try {
-    const res  = await fetch('/api/rx/packets', { method: 'DELETE' });
-    const data = await res.json();
-    rxLastId = data.baseline;
-    els.captureBody.innerHTML =
-      '<tr id="captureEmpty"><td colspan="8" class="capture-empty-msg">No packets captured — start receiver to begin.</td></tr>';
-    if (rxReceiving) els.rxLiveCount.textContent = '0';
-    logTs('Capture buffer cleared.', 'warn');
+    await fetch('/api/rx/streams', { method: 'DELETE' });
+    logTs('All captures stopped.', 'warn');
   } catch (err) {
-    logTs(`Clear error: ${err.message}`, 'error');
+    logTs(`Stop all error: ${err.message}`, 'error');
   }
+  Object.keys(_rxPolls).forEach(rxId => _removeRxCard(rxId));
 });
 
-// ─── RX: Live Poll ────────────────────────────────────────────────────────────
-function startRxPoll() {
-  rxPollTimer = setInterval(async () => {
+// ─── RX: Clear Table ─────────────────────────────────────────────────────────
+els.btnRxClear.addEventListener('click', async () => {
+  // bump since pointer for each stream so old packets don't re-appear
+  for (const [rxId, poll] of Object.entries(_rxPolls)) {
     try {
-      const res  = await fetch(`/api/rx/packets?since=${rxLastId}`);
+      const res  = await fetch(`/api/rx/streams/${rxId}/packets`, { method: 'DELETE' });
+      const data = await res.json();
+      poll.since = data.baseline;
+    } catch { /* ignore */ }
+  }
+  els.captureBody.innerHTML =
+    '<tr id="captureEmpty"><td colspan="9" class="capture-empty-msg">No packets captured — start a capture above.</td></tr>';
+  logTs('Capture table cleared.', 'warn');
+});
+
+// ─── RX: Per-stream polling ───────────────────────────────────────────────────
+function _beginRxPoll(rxId, cfg) {
+  _upsertRxCard(rxId, { receiving: true, count: 0, iface: cfg.iface, protocol: cfg.protocol, port: cfg.port });
+
+  const poll = { since: 0 };
+  poll.intervalId = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/rx/streams/${rxId}/packets?since=${poll.since}`);
+      if (res.status === 404) { _removeRxCard(rxId); return; }
       const data = await res.json();
       if (data.packets.length > 0) {
         appendCaptureRows(data.packets);
-        rxLastId = data.packets[data.packets.length - 1].id;
+        poll.since = data.packets[data.packets.length - 1].id;
       }
-      els.rxLiveCount.textContent = data.count.toLocaleString();
-      if (!data.receiving && rxReceiving) els.btnRxStop.click();
-    } catch { /* ignore */ }
+      _upsertRxCard(rxId, { receiving: data.receiving, count: data.count });
+      if (!data.receiving) _removeRxCard(rxId);
+    } catch { /* ignore transient errors */ }
   }, 500);
+
+  _rxPolls[rxId] = poll;
 }
 
-function stopRxPoll() {
-  if (rxPollTimer) { clearInterval(rxPollTimer); rxPollTimer = null; }
+function _stopRxPoll(rxId) {
+  if (_rxPolls[rxId]) {
+    clearInterval(_rxPolls[rxId].intervalId);
+    delete _rxPolls[rxId];
+  }
+}
+
+// ─── RX: Render / update a capture card ──────────────────────────────────────
+function _upsertRxCard(rxId, data) {
+  let card = $(`rx-card-${rxId}`);
+  if (!card) {
+    card = document.createElement('div');
+    card.id        = `rx-card-${rxId}`;
+    card.className = 'stream-card';
+    els.rxCaptureListEmpty.classList.add('hidden');
+    els.rxCaptureList.appendChild(card);
+  }
+
+  const proto   = (data.protocol || 'all').toUpperCase();
+  const port    = data.port ? `:${data.port}` : '';
+  const iface   = data.iface || '';
+  const count   = (data.count ?? 0).toLocaleString();
+
+  card.innerHTML =
+    `<div class="stream-card-header">` +
+      `<span class="stream-proto-badge proto-badge-udp">${proto}${port}</span>` +
+      (iface ? `<span class="stream-card-port">${iface}</span>` : '') +
+      `<a class="btn btn-secondary" style="margin-left:auto;font-size:.7rem;padding:2px 8px;text-decoration:none" ` +
+        `href="/api/rx/streams/${rxId}/pcap" download>PCAP</a>` +
+      `<button class="stream-card-stop" data-id="${rxId}" title="Stop capture">✕</button>` +
+    `</div>` +
+    `<div class="stream-card-stats">` +
+      `<span class="pulse-dot"></span>` +
+      `<span class="stream-card-sent">${count} pkts</span>` +
+      `<span class="stream-card-id">${rxId}</span>` +
+    `</div>`;
+
+  card.querySelector('.stream-card-stop').addEventListener('click', () => stopRxStream(rxId));
+}
+
+// ─── RX: Stop a single capture ────────────────────────────────────────────────
+async function stopRxStream(rxId) {
+  try {
+    const res  = await fetch(`/api/rx/streams/${rxId}/stop`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok && res.status !== 404) throw new Error(data.detail || 'Stop failed');
+    logTs(`Capture ${rxId} stopped. Received: ${data.count ?? '?'} pkts`, 'warn');
+  } catch (err) {
+    logTs(`Stop capture ${rxId}: ${err.message}`, 'error');
+  }
+  _removeRxCard(rxId);
+}
+
+function _removeRxCard(rxId) {
+  _stopRxPoll(rxId);
+  const card = $(`rx-card-${rxId}`);
+  if (card) card.remove();
+  if (!els.rxCaptureList.querySelector('.stream-card')) {
+    els.rxCaptureListEmpty.classList.remove('hidden');
+  }
+  _updateRxBadge();
+}
+
+function _updateRxBadge() {
+  const count = Object.keys(_rxPolls).length;
+  if (count > 0) {
+    setRxStatus('receiving', `${count} CAP${count > 1 ? 'S' : ''}`);
+    els.rxCaptureCount.textContent = count;
+    els.rxCaptureCount.classList.remove('hidden');
+    els.btnStopAllRx.classList.toggle('hidden', count < 2);
+  } else {
+    setRxStatus('idle', 'IDLE');
+    els.rxCaptureCount.classList.add('hidden');
+    els.btnStopAllRx.classList.add('hidden');
+  }
 }
 
 // ─── Socket Listener: Start ───────────────────────────────────────────────────
@@ -965,7 +1035,7 @@ els.btnListenerStart.addEventListener('click', async () => {
     els.listenerStats.classList.remove('hidden');
     els.listenerIdleMsg.classList.remove('hidden');
     els.listenerCountMsg.classList.add('hidden');
-    setRxStatus('receiving', 'LISTEN');
+    if (Object.keys(_rxPolls).length === 0) setRxStatus('receiving', 'LISTEN');
     logTs(`Listener: ${data.message}`, 'success');
     startListenerPoll();
   } catch (err) {
@@ -988,7 +1058,7 @@ els.btnListenerStop.addEventListener('click', async () => {
   els.btnListenerStop.classList.add('hidden');
   els.btnListenerStart.classList.remove('hidden');
   els.listenerStats.classList.add('hidden');
-  setRxStatus('idle', 'IDLE');
+  _updateRxBadge();
 });
 
 // ─── Socket Listener: Poll ────────────────────────────────────────────────────
@@ -1124,10 +1194,6 @@ function stopIperfPoll() {
   if (iperfPollTimer) { clearInterval(iperfPollTimer); iperfPollTimer = null; }
 }
 
-// ─── Download PCAP ────────────────────────────────────────────────────────────
-els.btnDownloadPcap.addEventListener('click', () => {
-  window.location.href = '/api/rx/pcap';
-});
 
 // ─── Clear Log ────────────────────────────────────────────────────────────────
 els.btnClear.addEventListener('click', () => { els.logOutput.innerHTML = ''; });

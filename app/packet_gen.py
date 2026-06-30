@@ -32,14 +32,24 @@ class StreamState:
 _streams: dict[str, StreamState] = {}
 _streams_lock = threading.Lock()
 
-# ─── Passive capture state ────────────────────────────────────────────────────
+# ─── Multi-stream passive capture state ───────────────────────────────────────
 
-_rx_sniffer: AsyncSniffer | None = None
-_rx_packets: deque = deque(maxlen=500)
-_rx_raw_packets: deque = deque(maxlen=500)  # raw Scapy packets for pcap export
-_rx_lock = threading.Lock()
-_rx_total = 0   # monotonic; used as "since" baseline for incremental polling
-_rx_timer: threading.Timer | None = None
+@dataclasses.dataclass
+class RxState:
+    rx_id:    str
+    iface:    str
+    protocol: str
+    port:     int | None
+    sniffer:  object                 # AsyncSniffer
+    packets:  deque = dataclasses.field(default_factory=lambda: deque(maxlen=500))
+    raw_pkts: deque = dataclasses.field(default_factory=lambda: deque(maxlen=500))
+    lock:     threading.Lock = dataclasses.field(default_factory=threading.Lock)
+    total:    int = 0
+    timer:    object = None          # threading.Timer | None
+
+
+_rx_streams: dict[str, RxState] = {}
+_rx_streams_lock = threading.Lock()
 
 # ─── Socket listener state ────────────────────────────────────────────────────
 
@@ -250,55 +260,45 @@ def any_sending() -> bool:
         return bool(_streams)
 
 
-# ─── Passive Capture ──────────────────────────────────────────────────────────
+# ─── Multi-stream Passive Capture ─────────────────────────────────────────────
 
-def _process_packet(pkt):
-    global _rx_total
-    if not pkt.haslayer(IP):
-        return
-
-    _rx_total += 1
-    now = datetime.datetime.now()
-
-    record: dict = {
-        "id":       _rx_total,
-        "time":     f"{now.strftime('%H:%M:%S')}.{now.microsecond // 1000:03d}",
-        "protocol": "IP",
-        "src_ip":   pkt[IP].src,
-        "dst_ip":   pkt[IP].dst,
-        "src_port": None,
-        "dst_port": None,
-        "dscp":     pkt[IP].tos >> 2,
-        "vlan":     pkt[Dot1Q].vlan if pkt.haslayer(Dot1Q) else None,
-        "length":   len(pkt),
-    }
-
-    if pkt.haslayer(TCP):
-        record["protocol"] = "TCP"
-        record["src_port"] = pkt[TCP].sport
-        record["dst_port"] = pkt[TCP].dport
-    elif pkt.haslayer(UDP):
-        record["protocol"] = "UDP"
-        record["src_port"] = pkt[UDP].sport
-        record["dst_port"] = pkt[UDP].dport
-    elif pkt.haslayer(ICMP):
-        record["protocol"] = "ICMP"
-
-    with _rx_lock:
-        _rx_packets.append(record)
-        _rx_raw_packets.append(pkt)
+def _make_rx_callback(state: RxState):
+    def _cb(pkt):
+        if not pkt.haslayer(IP):
+            return
+        now = datetime.datetime.now()
+        with state.lock:
+            state.total += 1
+            record: dict = {
+                "id":       state.total,
+                "rx_id":    state.rx_id,
+                "time":     f"{now.strftime('%H:%M:%S')}.{now.microsecond // 1000:03d}",
+                "protocol": "IP",
+                "src_ip":   pkt[IP].src,
+                "dst_ip":   pkt[IP].dst,
+                "src_port": None,
+                "dst_port": None,
+                "dscp":     pkt[IP].tos >> 2,
+                "vlan":     pkt[Dot1Q].vlan if pkt.haslayer(Dot1Q) else None,
+                "length":   len(pkt),
+            }
+            if pkt.haslayer(TCP):
+                record["protocol"] = "TCP"
+                record["src_port"] = pkt[TCP].sport
+                record["dst_port"] = pkt[TCP].dport
+            elif pkt.haslayer(UDP):
+                record["protocol"] = "UDP"
+                record["src_port"] = pkt[UDP].sport
+                record["dst_port"] = pkt[UDP].dport
+            elif pkt.haslayer(ICMP):
+                record["protocol"] = "ICMP"
+            state.packets.append(record)
+            state.raw_pkts.append(pkt)
+    return _cb
 
 
-def start_rx(iface: str, protocol: str = "all", port: int | None = None) -> tuple[bool, str]:
-    global _rx_sniffer, _rx_total, _rx_timer
-    if _rx_sniffer is not None and _rx_sniffer.running:
-        return False, "Already capturing"
-
-    with _rx_lock:
-        _rx_packets.clear()
-        _rx_raw_packets.clear()
-    _rx_total = 0
-
+def start_rx(iface: str, protocol: str = "all", port: int | None = None) -> tuple[str, str]:
+    rx_id = uuid.uuid4().hex[:8]
     parts: list[str] = []
     if protocol.lower() in ("udp", "tcp", "icmp"):
         parts.append(protocol.lower())
@@ -306,49 +306,99 @@ def start_rx(iface: str, protocol: str = "all", port: int | None = None) -> tupl
         parts.append(f"port {port}")
     bpf = " and ".join(parts) or None
 
-    _rx_sniffer = AsyncSniffer(iface=iface, filter=bpf, prn=_process_packet, store=False)
-    _rx_sniffer.start()
-    _rx_timer = threading.Timer(_AUTO_STOP_SECS, stop_rx)
-    _rx_timer.daemon = True
-    _rx_timer.start()
-    return True, "Capture started"
+    state = RxState(rx_id=rx_id, iface=iface, protocol=protocol, port=port, sniffer=None)
+    sniffer = AsyncSniffer(iface=iface, filter=bpf, prn=_make_rx_callback(state), store=False)
+    state.sniffer = sniffer
+    sniffer.start()
+
+    timer = threading.Timer(_AUTO_STOP_SECS, stop_rx, args=(rx_id,))
+    timer.daemon = True
+    timer.start()
+    state.timer = timer
+
+    with _rx_streams_lock:
+        _rx_streams[rx_id] = state
+    return rx_id, "Capture started"
 
 
-def stop_rx() -> int:
-    global _rx_sniffer, _rx_timer
-    if _rx_timer:
-        _rx_timer.cancel()
-        _rx_timer = None
-    if _rx_sniffer is not None and _rx_sniffer.running:
-        _rx_sniffer.stop()
-    _rx_sniffer = None
-    return _rx_total
+def stop_rx(rx_id: str) -> tuple[bool, int]:
+    with _rx_streams_lock:
+        state = _rx_streams.pop(rx_id, None)
+    if state is None:
+        return False, 0
+    if state.timer:
+        state.timer.cancel()
+    if state.sniffer is not None:
+        try:
+            state.sniffer.stop()
+        except Exception:
+            pass
+    return True, state.total
 
 
-def get_rx_packets(since: int = 0) -> list[dict]:
-    with _rx_lock:
-        return [p for p in _rx_packets if p["id"] > since]
+def stop_all_rx() -> dict[str, int]:
+    with _rx_streams_lock:
+        ids = list(_rx_streams.keys())
+    results = {}
+    for rx_id in ids:
+        _, count = stop_rx(rx_id)
+        results[rx_id] = count
+    return results
 
 
-def get_rx_raw_packets() -> list:
-    with _rx_lock:
-        return list(_rx_raw_packets)
+def get_rx_status(rx_id: str) -> dict | None:
+    with _rx_streams_lock:
+        state = _rx_streams.get(rx_id)
+    if state is None:
+        return None
+    return {
+        "rx_id":     state.rx_id,
+        "iface":     state.iface,
+        "protocol":  state.protocol,
+        "port":      state.port,
+        "receiving": state.sniffer is not None and state.sniffer.running,
+        "count":     state.total,
+    }
 
 
-def clear_rx_packets() -> int:
-    """Clear buffer; return current total so caller can update its since-baseline."""
-    with _rx_lock:
-        _rx_packets.clear()
-        _rx_raw_packets.clear()
-    return _rx_total
+def list_rx_streams() -> list[dict]:
+    with _rx_streams_lock:
+        ids = list(_rx_streams.keys())
+    return [s for rx_id in ids if (s := get_rx_status(rx_id)) is not None]
 
 
-def is_receiving() -> bool:
-    return _rx_sniffer is not None and _rx_sniffer.running
+def get_rx_packets(rx_id: str, since: int = 0) -> list[dict] | None:
+    with _rx_streams_lock:
+        state = _rx_streams.get(rx_id)
+    if state is None:
+        return None
+    with state.lock:
+        return [p for p in state.packets if p["id"] > since]
 
 
-def rx_count() -> int:
-    return _rx_total
+def get_rx_raw_packets(rx_id: str) -> list | None:
+    with _rx_streams_lock:
+        state = _rx_streams.get(rx_id)
+    if state is None:
+        return None
+    with state.lock:
+        return list(state.raw_pkts)
+
+
+def clear_rx_packets(rx_id: str) -> int | None:
+    with _rx_streams_lock:
+        state = _rx_streams.get(rx_id)
+    if state is None:
+        return None
+    with state.lock:
+        state.packets.clear()
+        state.raw_pkts.clear()
+    return state.total
+
+
+def any_receiving() -> bool:
+    with _rx_streams_lock:
+        return bool(_rx_streams)
 
 
 # ─── Socket Listener ──────────────────────────────────────────────────────────

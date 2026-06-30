@@ -385,10 +385,7 @@
         <section class="card">
           <h2>
             <span class="badge cap">CAP</span>Passive Capture
-            <span id="rxLiveCounter" class="live-counter hidden" style="margin-left:auto">
-              <span class="pulse-dot"></span>
-              <span id="rxLiveCount">0</span> pkts
-            </span>
+            <span id="rxCaptureCount" class="iface-pill hidden" style="margin-left:auto">0</span>
           </h2>
           <div class="field">
             <label for="rxIface">Interface</label>
@@ -411,8 +408,14 @@
           </div>
           <div class="rx-actions">
             <button id="btnRxStart" class="btn btn-success">Start Capture</button>
-            <button id="btnRxStop" class="btn btn-danger hidden">Stop Capture</button>
           </div>
+
+          <div id="rxCaptureList" style="margin-top:12px">
+            <div id="rxCaptureListEmpty">No captures running — use Start Capture above.</div>
+          </div>
+          <button id="btnStopAllRx" class="btn btn-danger hidden" style="margin-top:12px;width:100%">
+            Stop All Captures
+          </button>
         </section>
 
       </div><!-- /right col -->
@@ -423,7 +426,6 @@
       <div class="capture-header">
         <h2><span class="badge cap">CAP</span>Captured Packets</h2>
         <div class="capture-header-actions">
-          <button id="btnDownloadPcap" class="btn btn-primary btn-sm">Download PCAP</button>
           <button id="btnRxClear" class="btn-link">Clear</button>
         </div>
       </div>
@@ -431,6 +433,7 @@
         <table class="capture-table">
           <thead>
             <tr>
+              <th class="col-stream">Stream</th>
               <th class="col-id">#</th>
               <th class="col-time">Time</th>
               <th class="col-proto">Proto</th>
@@ -443,7 +446,7 @@
           </thead>
           <tbody id="captureBody">
             <tr id="captureEmpty">
-              <td colspan="8" class="capture-empty-msg">No packets captured — start capture to begin.</td>
+              <td colspan="9" class="capture-empty-msg">No packets captured — start a capture above.</td>
             </tr>
           </tbody>
         </table>

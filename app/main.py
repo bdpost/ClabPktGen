@@ -38,7 +38,7 @@ def _default_iface() -> str:
             return iface
     return ifaces[0] if ifaces else "eth1"
 
-app = FastAPI(title="PktGen", version="0.0.16")
+app = FastAPI(title="PktGen", version="0.0.17")
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static), name="static")
@@ -310,40 +310,67 @@ async def arp_resolve(req: ArpResolveRequest):
     return {"ip": req.ip, "interface": req.interface, "mac": mac}
 
 
-# ─── RX endpoints ─────────────────────────────────────────────────────────────
+# ─── Multi-stream RX endpoints ────────────────────────────────────────────────
 
-@app.post("/api/rx/start")
-async def rx_start(req: RxStartRequest):
-    ok, msg = packet_gen.start_rx(req.interface, req.protocol, req.port)
-    if not ok:
-        raise HTTPException(status_code=409, detail=msg)
-    return {"status": "ok", "message": msg, "interface": req.interface}
+@app.get("/api/rx/streams")
+async def rx_streams_list():
+    return {"streams": packet_gen.list_rx_streams()}
 
 
-@app.post("/api/rx/stop")
-async def rx_stop():
-    count = packet_gen.stop_rx()
-    return {"status": "ok", "count": count}
+@app.post("/api/rx/streams/start")
+async def rx_streams_start(req: RxStartRequest):
+    rx_id, msg = packet_gen.start_rx(req.interface, req.protocol, req.port)
+    return {"status": "ok", "rx_id": rx_id, "message": msg, "interface": req.interface}
 
 
-@app.get("/api/rx/packets")
-async def rx_packets(since: int = 0):
+@app.get("/api/rx/streams/{rx_id}")
+async def rx_streams_get(rx_id: str):
+    s = packet_gen.get_rx_status(rx_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"Capture {rx_id!r} not found")
+    return s
+
+
+@app.post("/api/rx/streams/{rx_id}/stop")
+async def rx_streams_stop(rx_id: str):
+    found, count = packet_gen.stop_rx(rx_id)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Capture {rx_id!r} not found")
+    return {"status": "ok", "rx_id": rx_id, "count": count}
+
+
+@app.delete("/api/rx/streams")
+async def rx_streams_stop_all():
+    results = packet_gen.stop_all_rx()
+    return {"status": "ok", "stopped": results}
+
+
+@app.get("/api/rx/streams/{rx_id}/packets")
+async def rx_streams_packets(rx_id: str, since: int = 0):
+    s = packet_gen.get_rx_status(rx_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"Capture {rx_id!r} not found")
+    pkts = packet_gen.get_rx_packets(rx_id, since)
     return {
-        "packets":   packet_gen.get_rx_packets(since),
-        "receiving": packet_gen.is_receiving(),
-        "count":     packet_gen.rx_count(),
+        "packets":   pkts,
+        "receiving": s["receiving"],
+        "count":     s["count"],
     }
 
 
-@app.delete("/api/rx/packets")
-async def rx_clear():
-    baseline = packet_gen.clear_rx_packets()
+@app.delete("/api/rx/streams/{rx_id}/packets")
+async def rx_streams_clear(rx_id: str):
+    baseline = packet_gen.clear_rx_packets(rx_id)
+    if baseline is None:
+        raise HTTPException(status_code=404, detail=f"Capture {rx_id!r} not found")
     return {"status": "ok", "baseline": baseline}
 
 
-@app.get("/api/rx/pcap")
-async def rx_pcap():
-    pkts = packet_gen.get_rx_raw_packets()
+@app.get("/api/rx/streams/{rx_id}/pcap")
+async def rx_streams_pcap(rx_id: str):
+    pkts = packet_gen.get_rx_raw_packets(rx_id)
+    if pkts is None:
+        raise HTTPException(status_code=404, detail=f"Capture {rx_id!r} not found")
     if not pkts:
         raise HTTPException(status_code=404, detail="No packets captured")
     buf = BytesIO()
@@ -353,7 +380,7 @@ async def rx_pcap():
     return StreamingResponse(
         buf,
         media_type="application/vnd.tcpdump.pcap",
-        headers={"Content-Disposition": "attachment; filename=capture.pcap"},
+        headers={"Content-Disposition": f"attachment; filename=capture-{rx_id}.pcap"},
     )
 
 
