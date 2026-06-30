@@ -919,7 +919,7 @@ els.btnRxClear.addEventListener('click', async () => {
 function _beginRxPoll(rxId, cfg) {
   _upsertRxCard(rxId, { receiving: true, count: 0, iface: cfg.iface, protocol: cfg.protocol, port: cfg.port });
 
-  const poll = { since: 0 };
+  const poll = { since: 0, cfg };
   poll.intervalId = setInterval(async () => {
     try {
       const res = await fetch(`/api/rx/streams/${rxId}/packets?since=${poll.since}`);
@@ -929,7 +929,7 @@ function _beginRxPoll(rxId, cfg) {
         appendCaptureRows(data.packets);
         poll.since = data.packets[data.packets.length - 1].id;
       }
-      _upsertRxCard(rxId, { receiving: data.receiving, count: data.count });
+      _upsertRxCard(rxId, { receiving: data.receiving, count: data.count, ...poll.cfg });
       if (!data.receiving) _removeRxCard(rxId);
     } catch { /* ignore transient errors */ }
   }, 500);

@@ -38,7 +38,7 @@ def _default_iface() -> str:
             return iface
     return ifaces[0] if ifaces else "eth1"
 
-app = FastAPI(title="PktGen", version="0.0.17")
+app = FastAPI(title="PktGen", version="0.0.18")
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static), name="static")
